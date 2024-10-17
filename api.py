@@ -100,38 +100,23 @@ def handle_alerts(func):
                 time.sleep(1)
     return wrapper
 
-import psutil
-import signal
-
 @app.route('/start_browser', methods=['POST'])
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
     chrome_path = data.get('chrome_path', '')
     display = data.get('display', ':1')
-    user_profile = data.get('user_profile', 'Default')
+    user_profile = data.get('user_profile', 'Default')  # New parameter for user profile
 
-    # Function to kill Chrome process using a specific debugging port
-    def kill_chrome_process(port):
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            if proc.info['name'] and 'chrome' in proc.info['name'].lower():
-                if any(f'--remote-debugging-port={port}' in cmd for cmd in proc.info['cmdline']):
-                    try:
-                        os.kill(proc.info['pid'], signal.SIGTERM)
-                        proc.wait(timeout=5)  # Wait for the process to terminate
-                    except (psutil.NoSuchProcess, psutil.TimeoutExpired):
-                        # Process already terminated or didn't respond to SIGTERM
-                        pass
-
-    # Kill any existing Chrome process using the specified debugging port
-    kill_chrome_process(debugging_port)
-
-    # Check if Chrome is still running (after attempting to kill)
+    # Check if Chrome is already running and get info
     chrome_info = get_chrome_info(debugging_port)
     if chrome_info["running"]:
         return jsonify({
-            "error": f"Failed to kill existing Chrome process on debugging port {debugging_port}",
-        }), 500
+            "message": f"Chrome is already running on debugging port {debugging_port}",
+            "url": chrome_info["url"],
+            "title": chrome_info["title"],
+            "old": True
+        }), 200
 
     if not chrome_path:
         common_locations = [
@@ -165,7 +150,7 @@ def start_browser():
             '--disable-infobars',
             '--disable-features=InterestFeedContentSuggestions',
             '--disable-default-apps',
-            f'--profile-directory={user_profile}'
+            f'--profile-directory={user_profile}'  # Add the user profile option
         ]
 
         # If running as root, add these options
@@ -211,68 +196,140 @@ def connect_to_chrome(debugging_port=9222):
 def click_element(driver):
     data = request.json
     xpath = data.get('xpath')
-    x = data.get('x')
-    y = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
-    force_click = data.get('force_click', False)
     wait_time = data.get('wait_time', 10)
 
-    if not xpath and (x is None or y is None):
-        return jsonify({"error": "Either xpath or both x and y coordinates must be provided"}), 400
+    if not xpath:
+        return jsonify({"error": "XPath must be provided"}), 400
 
     try:
-        if xpath:
-            try:
-                # Wait for the element to be clickable
-                element = WebDriverWait(driver, wait_time).until(
-                    EC.element_to_be_clickable((By.XPATH, xpath))
-                )
-                # Scroll the element into view
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+        # Wait for the element to be present in the DOM
+        WebDriverWait(driver, wait_time).until(
+            EC.presence_of_element_located((By.XPATH, xpath))
+        )
 
-                if force_click:
-                    # Use JavaScript to click the element
-                    driver.execute_script("arguments[0].click();", element)
-                else:
-                    # Try regular Selenium click first
-                    try:
-                        element.click()
-                    except ElementClickInterceptedException:
-                        # If regular click fails, try JavaScript click
-                        driver.execute_script("arguments[0].click();", element)
-                    except Exception as e:
-                        # If any other exception occurs during Selenium click, try JavaScript click
-                        print(f"Selenium click failed: {str(e)}. Attempting JavaScript click.")
-                        driver.execute_script("arguments[0].click();", element)
+        # JavaScript to forcefully click the element
+        force_click_script = """
+        function getElementByXpath(xpath) {
+            const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            return result.singleNodeValue;
+        }
 
-                return jsonify({
-                    "message": "Element clicked successfully",
-                    "xpath": xpath
-                }), 200
-            except TimeoutException:
-                return jsonify({"error": f"Element not clickable or not found within {wait_time} seconds"}), 404
-            except NoSuchElementException:
-                return jsonify({"error": "Element not found"}), 404
-        else:
-            # Handle coordinate-based click (unchanged from previous version)
-            window_size = driver.get_window_size()
-            center_x = window_size['width'] // 2
-            center_y = window_size['height'] // 2
-            adjusted_x = center_x + x
-            adjusted_y = center_y + y
-            adjusted_x = max(0, min(adjusted_x, window_size['width'] - 1))
-            adjusted_y = max(0, min(adjusted_y, window_size['height'] - 1))
+        function forceClickElement(element) {
+            if (element) {
+                try {
+                    // Scroll the element into view
+                    element.scrollIntoView({block: 'center', inline: 'center'});
+                    
+                    // Create a new mouse event
+                    const clickEvent = new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    
+                    // Dispatch the event to the element
+                    element.dispatchEvent(clickEvent);
+                    
+                    return "Click event dispatched to the element";
+                } catch (error) {
+                    return "Error clicking the element: " + error.toString();
+                }
+            } else {
+                return "Element not found";
+            }
+        }
 
-            action_chains = ActionChains(driver)
-            action_chains.move_by_offset(center_x, center_y).perform()
-            action_chains.move_by_offset(x, y).click().perform()
-            action_chains.move_by_offset(-adjusted_x, -adjusted_y).perform()
+        const element = getElementByXpath(arguments[0]);
+        return forceClickElement(element);
+        """
 
-            return jsonify({
-                "message": "Click action performed successfully",
-                "click_coordinates": {"x": x, "y": y},
-                "adjusted_coordinates": {"x": adjusted_x, "y": adjusted_y}
-            }), 200
+        # Execute the JavaScript to click the element
+        result = driver.execute_script(force_click_script, xpath)
+
+        if "Error" in result or "not found" in result:
+            return jsonify({"error": result}), 400
+
+        return jsonify({
+            "message": "Element clicked successfully",
+            "xpath": xpath,
+            "result": result
+        }), 200
+
+    except TimeoutException:
+        return jsonify({"error": f"Element not found within {wait_time} seconds"}), 404
+    except WebDriverException as e:
+        return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+    
+@app.route('/double_click_element', methods=['POST'])
+@handle_alerts
+def double_click_element(driver):
+    data = request.json
+    xpath = data.get('xpath')
+    debugging_port = data.get('debugging_port', 9222)
+    wait_time = data.get('wait_time', 10)
+
+    if not xpath:
+        return jsonify({"error": "XPath must be provided"}), 400
+
+    try:
+        # Wait for the element to be present in the DOM
+        WebDriverWait(driver, wait_time).until(
+            EC.presence_of_element_located((By.XPATH, xpath))
+        )
+
+        # JavaScript to forcefully double-click the element
+        force_double_click_script = """
+        function getElementByXpath(xpath) {
+            const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            return result.singleNodeValue;
+        }
+
+        function forceDoubleClickElement(element) {
+            if (element) {
+                try {
+                    // Scroll the element into view
+                    element.scrollIntoView({block: 'center', inline: 'center'});
+                    
+                    // Create a new mouse event for double-click
+                    const dblclickEvent = new MouseEvent('dblclick', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    
+                    // Dispatch the event to the element
+                    element.dispatchEvent(dblclickEvent);
+                    
+                    return "Double-click event dispatched to the element";
+                } catch (error) {
+                    return "Error double-clicking the element: " + error.toString();
+                }
+            } else {
+                return "Element not found";
+            }
+        }
+
+        const element = getElementByXpath(arguments[0]);
+        return forceDoubleClickElement(element);
+        """
+
+        # Execute the JavaScript to double-click the element
+        result = driver.execute_script(force_double_click_script, xpath)
+
+        if "Error" in result or "not found" in result:
+            return jsonify({"error": result}), 400
+
+        return jsonify({
+            "message": "Element double-clicked successfully",
+            "xpath": xpath,
+            "result": result
+        }), 200
+
+    except TimeoutException:
+        return jsonify({"error": f"Element not found within {wait_time} seconds"}), 404
     except WebDriverException as e:
         return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
     except Exception as e:
@@ -321,88 +378,45 @@ def go_to_url(driver):
 def type_input(driver):
     data = request.json
     xpath = data.get('xpath')
-    x = data.get('x')
-    y = data.get('y')
     input_text = data.get('text')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
     clear = data.get('clear', False)
 
-    if not input_text:
-        return jsonify({"error": "Input text must be provided"}), 400
-    if not xpath and (x is None or y is None):
-        return jsonify({"error": "Either xpath or both x and y coordinates must be provided"}), 400
+    if not xpath or not input_text:
+        return jsonify({"error": "Both xpath and input text must be provided"}), 400
 
     try:
-        if xpath:
-            try:
-                # Wait for the element to be visible and interactable
-                element = WebDriverWait(driver, wait_time).until(
-                    EC.visibility_of_element_located((By.XPATH, xpath))
-                )
-                # Scroll the element into view
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-                
-                if clear:
-                    # Clear any existing text in the input element
-                    element.clear()
-                
-                # Type the input text character by character
-                for char in input_text:
-                    if char == ' ':
-                        element.send_keys(Keys.SPACE)
-                    else:
-                        element.send_keys(char)
-                    time.sleep(0.1)  # Add a small delay between keypresses
-                
-                # Unfocus the element by clicking elsewhere
-                driver.execute_script("arguments[0].blur();", element)
-                
-                return jsonify({
-                    "message": "Input typed successfully",
-                    "xpath": xpath
-                }), 200
-            except TimeoutException:
-                return jsonify({"error": f"Element not found or not interactable within {wait_time} seconds"}), 404
-            except NoSuchElementException:
-                return jsonify({"error": "Element not found"}), 404
-        else:
-            # Handle coordinate-based input
-            window_size = driver.get_window_size()
-            center_x = window_size['width'] // 2
-            center_y = window_size['height'] // 2
-            adjusted_x = center_x + x
-            adjusted_y = center_y + y
-            adjusted_x = max(0, min(adjusted_x, window_size['width'] - 1))
-            adjusted_y = max(0, min(adjusted_y, window_size['height'] - 1))
-            
-            action_chains = ActionChains(driver)
-            action_chains.move_by_offset(center_x, center_y).perform()
-            action_chains.move_by_offset(x, y).click().perform()
-            
-            # Locate the element that is currently focused (where the cursor is)
-            active_element = driver.switch_to.active_element
-            
-            if clear:
-                # Clear any existing text in the input element
-                active_element.clear()
-            
-            # Type the input text character by character
-            for char in input_text:
-                if char == ' ':
-                    active_element.send_keys(Keys.SPACE)
-                else:
-                    active_element.send_keys(char)
-                time.sleep(0.1)  # Add a small delay between keypresses
-            
-            # Unfocus the element by clicking elsewhere
-            action_chains.move_by_offset(-adjusted_x, -adjusted_y).click().perform()
-            
-            return jsonify({
-                "message": "Input typed successfully",
-                "click_coordinates": {"x": x, "y": y},
-                "adjusted_coordinates": {"x": adjusted_x, "y": adjusted_y}
-            }), 200
+        # Wait for the element to be visible and interactable
+        element = WebDriverWait(driver, wait_time).until(
+            EC.visibility_of_element_located((By.XPATH, xpath))
+        )
+        # Scroll the element into view
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+        
+        if clear:
+            # Clear any existing text in the input element
+            element.clear()
+        
+        # Type the input text character by character
+        for char in input_text:
+            if char == ' ':
+                element.send_keys(Keys.SPACE)
+            else:
+                element.send_keys(char)
+            time.sleep(0.1)  # Add a small delay between keypresses
+        
+        # Unfocus the element by clicking elsewhere
+        driver.execute_script("arguments[0].blur();", element)
+        
+        return jsonify({
+            "message": "Input typed successfully",
+            "xpath": xpath
+        }), 200
+    except TimeoutException:
+        return jsonify({"error": f"Element not found or not interactable within {wait_time} seconds"}), 404
+    except NoSuchElementException:
+        return jsonify({"error": "Element not found"}), 404
     except WebDriverException as e:
         return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
     except Exception as e:
@@ -505,13 +519,19 @@ def get_dom_content(driver):
         return None
 
 def generate_response(screenshot, dom_content):
-    yield json.dumps({
-        "message": "Screenshot and DOM content captured successfully",
-        "screenshot": screenshot,
-    }).encode('utf-8')
-    yield b'\n"dom_content": "'
-    yield dom_content.encode('utf-8').replace(b'"', b'\\"').replace(b'\n', b'\\n')
-    yield b'"}'
+    try:
+        # Limit the size of dom_content if it's too large
+        max_dom_size = 1000000  # 1MB limit
+        if len(dom_content) > max_dom_size:
+            dom_content = dom_content[:max_dom_size] + "... (truncated)"
+
+        return json.dumps({
+            "screenshot": screenshot,
+            "dom_content": dom_content
+        })
+    except Exception as e:
+        print(f"Error generating response: {str(e)}")
+        return json.dumps({"error": "Failed to generate response"})
 
 @app.route('/look', methods=['POST'])
 @handle_alerts
@@ -519,16 +539,16 @@ def look(driver):
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
     try:
-        # Wait for the page to be fully loaded
+        # Wait for the page to be fully loaded with a shorter timeout
         try:
-            WebDriverWait(driver, 30).until(
+            WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
         except TimeoutException:
             return jsonify({"error": "Timed out waiting for page to load"}), 504
 
-        # Use CDP to capture viewport screenshot and visible DOM content
-        screenshot, dom_content = capture_viewport_data(driver)
+        # Attempt to capture viewport data with error handling
+        screenshot, dom_content = safe_capture_viewport_data(driver)
 
         if screenshot is None or dom_content is None:
             return jsonify({"error": "Failed to capture viewport data"}), 500
@@ -537,7 +557,7 @@ def look(driver):
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
-def capture_viewport_data(driver):
+def safe_capture_viewport_data(driver):
     try:
         # Get the document.readyState
         ready_state = driver.execute_script("return document.readyState")
@@ -548,39 +568,40 @@ def capture_viewport_data(driver):
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
 
-        # Capture viewport screenshot using CDP
-        screenshot = driver.execute_cdp_cmd("Page.captureScreenshot", {
-            "format": "png",
-            "fromSurface": True,
-            "captureBeyondViewport": False  # This ensures we only capture the viewport
-        })
+        # Attempt to capture screenshot using CDP
+        try:
+            screenshot = driver.execute_cdp_cmd("Page.captureScreenshot", {
+                "format": "png",
+                "fromSurface": True,
+                "captureBeyondViewport": False
+            })
+        except Exception as e:
+            print(f"CDP screenshot failed: {e}")
+            # Fallback to regular screenshot method
+            screenshot = {"data": driver.get_screenshot_as_base64()}
 
-        # Get the visible DOM content
-        visible_dom_content = driver.execute_script("""
-            return (function() {
-                var elements = document.body.getElementsByTagName('*');
-                var visibleElements = [];
-                for (var i = 0; i < elements.length; i++) {
-                    var rect = elements[i].getBoundingClientRect();
-                    if (rect.top < window.innerHeight && rect.bottom > 0 &&
-                        rect.left < window.innerWidth && rect.right > 0) {
-                        visibleElements.push(elements[i].outerHTML);
+        # Get the visible DOM content with a timeout
+        visible_dom_content = WebDriverWait(driver, 10).until(
+            lambda d: d.execute_script("""
+                return (function() {
+                    var elements = document.body.getElementsByTagName('*');
+                    var visibleElements = [];
+                    for (var i = 0; i < elements.length; i++) {
+                        var rect = elements[i].getBoundingClientRect();
+                        if (rect.top < window.innerHeight && rect.bottom > 0 &&
+                            rect.left < window.innerWidth && rect.right > 0) {
+                            visibleElements.push(elements[i].outerHTML);
+                        }
                     }
-                }
-                return visibleElements.join('');
-            })();
-        """)
+                    return visibleElements.join('');
+                })();
+            """)
+        )
 
         return screenshot['data'], visible_dom_content
     except Exception as e:
         print(f"Error capturing viewport data: {str(e)}")
         return None, None
-
-def generate_response(screenshot, dom_content):
-    return json.dumps({
-        "screenshot": screenshot,
-        "dom_content": dom_content
-    })
     
 @app.route('/deep-look', methods=['POST'])
 @handle_alerts
