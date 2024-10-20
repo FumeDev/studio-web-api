@@ -14,6 +14,7 @@ import time
 import os
 import subprocess
 import requests
+import traceback
 
 from bs4 import BeautifulSoup
 
@@ -143,8 +144,13 @@ def start_browser():
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
+            '--disable-gpu',  # Disable GPU hardware acceleration
+            '--no-sandbox',  # Disable the sandbox for troubleshooting
+            '--disable-dev-shm-usage',  # Overcome limited resource problems
+            '--ignore-certificate-errors',  # Ignore SSL certificate errors
+            '--disable-extensions',  # Disable extensions to reduce complexity
+            '--disable-software-rasterizer',  # Disable software rasterizer
+            '--disable-gpu-sandbox',  # Disable GPU sandbox
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-infobars',
@@ -341,6 +347,7 @@ def go_to_url(driver):
     data = request.json
     url = data.get('url')
     debugging_port = data.get('debugging_port', 9222)
+    timeout = data.get('timeout', 50)  # Allow custom timeout
 
     if not url:
         return jsonify({"error": "URL not provided"}), 400
@@ -350,28 +357,79 @@ def go_to_url(driver):
         url = f'https://{url}'
 
     try:
+        print(f"Attempting to navigate to: {url}")
         driver.get(url)
         
-        # Wait for the page to load
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
+        # Wait for the page to start loading
+        WebDriverWait(driver, 10).until(lambda d: d.execute_script('return document.readyState') != 'complete')
+        
+        # Wait for the page to finish loading or timeout
+        try:
+            WebDriverWait(driver, timeout).until(
+                lambda d: d.execute_script('return document.readyState') == 'complete'
+            )
+            print("Page loaded completely")
+        except TimeoutException:
+            print(f"Page did not fully load within {timeout} seconds, but proceeding anyway")
+        
+        # Check if body exists
+        try:
+            body = driver.find_element(By.TAG_NAME, "body")
+            print("Body element found")
+        except NoSuchElementException:
+            print("No body element found, page might not have loaded correctly")
         
         current_url = driver.current_url
         page_title = driver.title
         
+        print(f"Current URL: {current_url}")
+        print(f"Page title: {page_title}")
+        
+        # Get any JavaScript errors
+        js_errors = driver.execute_script("return window.JSErrors || []")
+        if js_errors:
+            print("JavaScript errors encountered:", js_errors)
+        
         return jsonify({
-            "message": "Successfully navigated to URL",
+            "message": "Navigation attempt completed",
             "current_url": current_url,
-            "page_title": page_title
+            "page_title": page_title,
+            "fully_loaded": driver.execute_script('return document.readyState') == 'complete',
+            "js_errors": js_errors
         }), 200
 
-    except TimeoutException:
-        return jsonify({"error": "Timeout while loading the page"}), 504
     except WebDriverException as e:
-        return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
+        error_msg = str(e)
+        stack_trace = traceback.format_exc()
+        print(f"WebDriver error: {error_msg}")
+        print(f"Stack trace: {stack_trace}")
+        
+        # Attempt to get additional information
+        try:
+            current_url = driver.current_url
+            page_source = driver.page_source
+            screenshot = driver.get_screenshot_as_base64()
+        except Exception as inner_e:
+            print(f"Error getting additional information: {str(inner_e)}")
+            current_url = page_source = screenshot = None
+
+        return jsonify({
+            "error": f"WebDriver error: {error_msg}",
+            "stack_trace": stack_trace,
+            "current_url": current_url,
+            "page_source": page_source,
+            "screenshot": screenshot
+        }), 500
+
     except Exception as e:
-        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+        error_msg = str(e)
+        stack_trace = traceback.format_exc()
+        print(f"Unexpected error: {error_msg}")
+        print(f"Stack trace: {stack_trace}")
+        return jsonify({
+            "error": f"Unexpected error: {error_msg}",
+            "stack_trace": stack_trace
+        }), 500
     
 @app.route('/type_input', methods=['POST'])
 @handle_alerts
@@ -545,30 +603,66 @@ def look(driver):
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
         except TimeoutException:
-            return jsonify({"error": "Timed out waiting for page to load"}), 504
+            # If timeout occurs, capture what's available on the page
+            error_content = driver.page_source
+            error_screenshot = driver.get_screenshot_as_base64()
+            return jsonify({
+                "error": "Timed out waiting for page to load",
+                "error_content": error_content,
+                "error_screenshot": error_screenshot
+            }), 200  # Return 200 to allow further processing of the error
 
         # Attempt to capture viewport data with error handling
         screenshot, dom_content = safe_capture_viewport_data(driver)
 
-        if screenshot is None or dom_content is None:
-            return jsonify({"error": "Failed to capture viewport data"}), 500
+        if dom_content is None:
+            # If DOM content capture fails, return what we can
+            error_content = driver.page_source
+            return jsonify({
+                "error": "Failed to capture DOM content",
+                "error_content": error_content,
+                "screenshot": screenshot if screenshot else driver.get_screenshot_as_base64()
+            }), 200  # Return 200 to allow further processing of the error
+
+        if screenshot is None:
+            # If screenshot capture fails, return what we can
+            return jsonify({
+                "error": "Failed to capture screenshot",
+                "dom_content": dom_content
+            }), 200  # Return 200 to allow further processing of the error
 
         return Response(generate_response(screenshot, dom_content), content_type='application/json')
     except Exception as e:
-        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+        # Capture any unexpected errors
+        error_content = driver.page_source
+        error_screenshot = driver.get_screenshot_as_base64()
+        return jsonify({
+            "error": f"Unexpected error: {str(e)}",
+            "error_content": error_content,
+            "error_screenshot": error_screenshot
+        }), 200  # Return 200 to allow further processing of the error
 
 def safe_capture_viewport_data(driver):
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
     try:
         # Get the document.readyState
         ready_state = driver.execute_script("return document.readyState")
         
         # If the page is not complete, wait a bit more
         if ready_state != "complete":
-            WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
+            try:
+                WebDriverWait(driver, 10).until(
+                    lambda d: d.execute_script("return document.readyState") == "complete"
+                )
+            except TimeoutException:
+                logger.warning("Timed out waiting for page to be complete. Proceeding anyway.")
 
         # Attempt to capture screenshot using CDP
+        screenshot = None
         try:
             screenshot = driver.execute_cdp_cmd("Page.captureScreenshot", {
                 "format": "png",
@@ -576,31 +670,44 @@ def safe_capture_viewport_data(driver):
                 "captureBeyondViewport": False
             })
         except Exception as e:
-            print(f"CDP screenshot failed: {e}")
-            # Fallback to regular screenshot method
-            screenshot = {"data": driver.get_screenshot_as_base64()}
+            logger.error(f"CDP screenshot failed: {e}")
+            try:
+                # Fallback to regular screenshot method
+                screenshot = {"data": driver.get_screenshot_as_base64()}
+            except Exception as e:
+                logger.error(f"Regular screenshot method also failed: {e}")
+
+        if screenshot is None:
+            raise Exception("Failed to capture screenshot using both CDP and regular methods")
 
         # Get the visible DOM content with a timeout
-        visible_dom_content = WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script("""
-                return (function() {
-                    var elements = document.body.getElementsByTagName('*');
-                    var visibleElements = [];
-                    for (var i = 0; i < elements.length; i++) {
-                        var rect = elements[i].getBoundingClientRect();
-                        if (rect.top < window.innerHeight && rect.bottom > 0 &&
-                            rect.left < window.innerWidth && rect.right > 0) {
-                            visibleElements.push(elements[i].outerHTML);
+        try:
+            visible_dom_content = WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("""
+                    return (function() {
+                        var elements = document.body.getElementsByTagName('*');
+                        var visibleElements = [];
+                        for (var i = 0; i < elements.length; i++) {
+                            var rect = elements[i].getBoundingClientRect();
+                            if (rect.top < window.innerHeight && rect.bottom > 0 &&
+                                rect.left < window.innerWidth && rect.right > 0) {
+                                visibleElements.push(elements[i].outerHTML);
+                            }
                         }
-                    }
-                    return visibleElements.join('');
-                })();
-            """)
-        )
+                        return visibleElements.join('');
+                    })();
+                """)
+            )
+        except TimeoutException:
+            logger.error("Timed out while trying to get visible DOM content")
+            visible_dom_content = None
+
+        if visible_dom_content is None:
+            raise Exception("Failed to capture visible DOM content")
 
         return screenshot['data'], visible_dom_content
     except Exception as e:
-        print(f"Error capturing viewport data: {str(e)}")
+        logger.exception(f"Error capturing viewport data: {str(e)}")
         return None, None
     
 @app.route('/deep-look', methods=['POST'])
@@ -772,28 +879,32 @@ def go_back(driver):
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
     
-@app.route('/get_console_log', methods=['POST'])
+@app.route('/get_console_log', methods=['GET'])
 @handle_alerts
 def get_console_log(driver):
-    data = request.json
-    debugging_port = data.get('debugging_port', 9222)
+    debugging_port = request.args.get('debugging_port', 9222)
 
     try:
-        # Get browser logs
-        logs = driver.get_log('browser')
-        
-        # Format logs for readability
-        formatted_logs = []
-        for log in logs:
-            formatted_logs.append({
-                'timestamp': log['timestamp'],
-                'level': log['level'],
-                'message': log['message']
-            })
+        # Execute JavaScript to retrieve console logs
+        logs = driver.execute_script("""
+            var console_logs = [];
+            var original = window.console;
+            ['log', 'debug', 'info', 'warn', 'error'].forEach(function(level) {
+                console[level] = function() {
+                    console_logs.push({
+                        level: level,
+                        message: Array.prototype.slice.call(arguments).join(' '),
+                        timestamp: new Date().getTime()
+                    });
+                    original[level].apply(original, arguments);
+                };
+            });
+            return console_logs;
+        """)
         
         return jsonify({
             "message": "Console logs retrieved successfully",
-            "logs": formatted_logs
+            "logs": logs
         }), 200
 
     except WebDriverException as e:
