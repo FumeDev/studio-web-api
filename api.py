@@ -105,6 +105,21 @@ def handle_alerts(func):
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
+    
+    # Check if Chrome is already running
+    if is_chrome_running(debugging_port):
+        # Try to kill existing Chrome instance
+        try:
+            if os.name == 'nt':  # Windows
+                os.system(f'taskkill /F /IM chrome.exe')
+            else:  # Unix/Linux/MacOS
+                os.system('pkill -f "(Google)?Chrome"')
+            time.sleep(2)  # Wait for Chrome to fully close
+        except Exception as e:
+            return jsonify({
+                "error": f"Failed to kill existing Chrome instance: {str(e)}. Please close Chrome manually."
+            }), 500
+
     chrome_path = data.get('chrome_path', '')
     display = data.get('display', ':1')
     user_profile = data.get('user_profile', 'Default')  # New parameter for user profile
@@ -347,7 +362,7 @@ def go_to_url(driver):
     data = request.json
     url = data.get('url')
     debugging_port = data.get('debugging_port', 9222)
-    timeout = data.get('timeout', 50)  # Allow custom timeout
+    timeout = data.get('timeout', 50)
 
     if not url:
         return jsonify({"error": "URL not provided"}), 400
@@ -358,21 +373,26 @@ def go_to_url(driver):
 
     try:
         print(f"Attempting to navigate to: {url}")
+        
+        # Get the initial page load state
+        initial_state = driver.execute_script('return document.readyState')
+        
+        # Navigate to URL
         driver.get(url)
         
-        # Wait for the page to start loading
-        WebDriverWait(driver, 10).until(lambda d: d.execute_script('return document.readyState') != 'complete')
-        
-        # Wait for the page to finish loading or timeout
+        # Wait for page load to complete with a more robust approach
         try:
             WebDriverWait(driver, timeout).until(
-                lambda d: d.execute_script('return document.readyState') == 'complete'
+                lambda d: (
+                    d.execute_script('return document.readyState') == 'complete' and
+                    d.execute_script('return document.readyState') != initial_state
+                )
             )
             print("Page loaded completely")
         except TimeoutException:
             print(f"Page did not fully load within {timeout} seconds, but proceeding anyway")
         
-        # Check if body exists
+        # Rest of the function remains the same...
         try:
             body = driver.find_element(By.TAG_NAME, "body")
             print("Body element found")
@@ -385,7 +405,6 @@ def go_to_url(driver):
         print(f"Current URL: {current_url}")
         print(f"Page title: {page_title}")
         
-        # Get any JavaScript errors
         js_errors = driver.execute_script("return window.JSErrors || []")
         if js_errors:
             print("JavaScript errors encountered:", js_errors)
@@ -435,46 +454,25 @@ def go_to_url(driver):
 @handle_alerts
 def type_input(driver):
     data = request.json
-    xpath = data.get('xpath')
     input_text = data.get('text')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
-    clear = data.get('clear', False)
 
-    if not xpath or not input_text:
-        return jsonify({"error": "Both xpath and input text must be provided"}), 400
+    if not input_text:
+        return jsonify({"error": "Input text must be provided"}), 400
 
     try:
-        # Wait for the element to be visible and interactable
-        element = WebDriverWait(driver, wait_time).until(
-            EC.visibility_of_element_located((By.XPATH, xpath))
-        )
-        # Scroll the element into view
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-        
-        if clear:
-            # Clear any existing text in the input element
-            element.clear()
-        
         # Type the input text character by character
         for char in input_text:
             if char == ' ':
-                element.send_keys(Keys.SPACE)
+                driver.switch_to.active_element.send_keys(Keys.SPACE)
             else:
-                element.send_keys(char)
+                driver.switch_to.active_element.send_keys(char)
             time.sleep(0.1)  # Add a small delay between keypresses
-        
-        # Unfocus the element by clicking elsewhere
-        driver.execute_script("arguments[0].blur();", element)
         
         return jsonify({
             "message": "Input typed successfully",
-            "xpath": xpath
         }), 200
-    except TimeoutException:
-        return jsonify({"error": f"Element not found or not interactable within {wait_time} seconds"}), 404
-    except NoSuchElementException:
-        return jsonify({"error": "Element not found"}), 404
     except WebDriverException as e:
         return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
     except Exception as e:
@@ -835,10 +833,9 @@ def press_enter(driver):
     debugging_port = data.get('debugging_port', 9222)
 
     try:
-        # Press Enter key
-        action_chains = ActionChains(driver)
-        action_chains.send_keys(Keys.ENTER).perform()
-
+        # Use ActionChains to send Enter key - most reliable cross-browser method
+        ActionChains(driver).send_keys(Keys.RETURN).perform()
+        
         return jsonify({
             "message": "Enter key pressed successfully"
         }), 200
