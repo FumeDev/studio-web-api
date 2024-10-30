@@ -18,6 +18,134 @@ import traceback
 
 from bs4 import BeautifulSoup
 
+
+def get_console_logging_script():
+    return """
+        // Only initialize if not already initialized
+        if (!window._consoleLogs) {
+            // Initialize our log storage
+            window._consoleLogs = [];
+            
+            // Store original console methods
+            const originalConsole = {
+                log: console.log,
+                info: console.info,
+                warn: console.warn,
+                error: console.error,
+                debug: console.debug
+            };
+
+            // Function to capture stack trace
+            function getStackTrace() {
+                try {
+                    throw new Error();
+                } catch (e) {
+                    return e.stack.split('\\n').slice(2).join('\\n');
+                }
+            }
+
+            // Override console methods before anything else runs
+            ['log', 'info', 'warn', 'error', 'debug'].forEach(function(method) {
+                console[method] = function(...args) {
+                    // Format the message
+                    const message = args.map(arg => {
+                        if (arg === null) return 'null';
+                        if (arg === undefined) return 'undefined';
+                        if (typeof arg === 'object') {
+                            try {
+                                return JSON.stringify(arg);
+                            } catch (e) {
+                                return String(arg);
+                            }
+                        }
+                        return String(arg);
+                    }).join(' ');
+                    
+                    // Get stack trace for more context
+                    const stack = getStackTrace();
+                    
+                    // Store the log with additional context
+                    window._consoleLogs.push({
+                        level: method,
+                        message: message,
+                        timestamp: new Date().toISOString(),
+                        url: window.location.href,
+                        stack: stack
+                    });
+                    
+                    // Limit log size to 1000 entries
+                    if (window._consoleLogs.length > 1000) {
+                        window._consoleLogs = window._consoleLogs.slice(-1000);
+                    }
+                    
+                    // Call original console method
+                    originalConsole[method].apply(console, args);
+                };
+            });
+
+            // Capture uncaught errors
+            window.addEventListener('error', function(event) {
+                window._consoleLogs.push({
+                    level: 'error',
+                    message: `${event.message} (in ${event.filename}:${event.lineno}:${event.colno})`,
+                    timestamp: new Date().toISOString(),
+                    url: event.filename,
+                    line: event.lineno,
+                    column: event.colno,
+                    error: event.error ? event.error.stack : null
+                });
+            }, true);  // Use capturing to get errors before they're handled
+
+            // Capture unhandled promise rejections
+            window.addEventListener('unhandledrejection', function(event) {
+                window._consoleLogs.push({
+                    level: 'error',
+                    message: 'Unhandled Promise Rejection: ' + (event.reason.stack || event.reason),
+                    timestamp: new Date().toISOString(),
+                    url: window.location.href,
+                    error: event.reason.stack
+                });
+            }, true);  // Use capturing
+
+            // Inject into any iframes that get created
+            const observeIframes = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    mutation.addedNodes.forEach(function(node) {
+                        if (node.tagName === 'IFRAME') {
+                            try {
+                                node.addEventListener('load', function() {
+                                    try {
+                                        node.contentWindow.eval(`(${arguments.callee.toString()})()`);
+                                    } catch (e) {
+                                        console.error('Failed to inject logging into iframe:', e);
+                                    }
+                                });
+                            } catch (e) {
+                                console.error('Failed to add iframe listener:', e);
+                            }
+                        }
+                    });
+                });
+            });
+
+            observeIframes.observe(document, {
+                childList: true,
+                subtree: true
+            });
+
+            // Also inject into any existing iframes
+            document.querySelectorAll('iframe').forEach(function(iframe) {
+                try {
+                    iframe.contentWindow.eval(`(${arguments.callee.toString()})()`);
+                } catch (e) {
+                    console.error('Failed to inject logging into existing iframe:', e);
+                }
+            });
+
+            console.log('Console logging system initialized');
+        }
+    """
+
 def extract_body_content(dom_string):
     # Parse the DOM string
     soup = BeautifulSoup(dom_string, 'html.parser')
@@ -160,9 +288,7 @@ def start_browser():
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
             '--disable-gpu',  # Disable GPU hardware acceleration
-            '--no-sandbox',  # Disable the sandbox for troubleshooting
             '--disable-dev-shm-usage',  # Overcome limited resource problems
-            '--ignore-certificate-errors',  # Ignore SSL certificate errors
             '--disable-extensions',  # Disable extensions to reduce complexity
             '--disable-software-rasterizer',  # Disable software rasterizer
             '--no-first-run',
@@ -182,10 +308,18 @@ def start_browser():
 
         subprocess.Popen(chrome_command, env=os.environ)
 
-        # Wait for Chrome to start and get the initial page info
-        time.sleep(2)  # Give Chrome a moment to start
-        chrome_info = get_chrome_info(debugging_port)
+        # Wait for Chrome to start
+        time.sleep(2)
+        
+        # Connect to Chrome and inject the console logging script
+        try:
+            driver = connect_to_chrome(debugging_port)
+            driver.execute_script(get_console_logging_script())
+        except Exception as e:
+            print(f"Warning: Failed to inject console logging script: {str(e)}")
 
+        # Get Chrome info and return response
+        chrome_info = get_chrome_info(debugging_port)
         if chrome_info["running"]:
             return jsonify({
                 "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'",
@@ -193,7 +327,9 @@ def start_browser():
                 "title": chrome_info["title"]
             }), 200
         else:
-            return jsonify({"message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'"}), 200
+            return jsonify({
+                "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'"
+            }), 200
 
     except Exception as e:
         return jsonify({"error": f"Failed to start Chrome: {str(e)}"}), 500
@@ -225,6 +361,10 @@ def click_element(driver):
         return jsonify({"error": "Either XPath or both x and y coordinates must be provided"}), 400
 
     try:
+        # Before click, get any existing logs
+        existing_logs = driver.execute_script("return window._consoleLogs || [];")
+        
+        # Perform click
         if xpath:
             # Wait for the element to be present in the DOM
             WebDriverWait(driver, wait_time).until(
@@ -273,6 +413,12 @@ def click_element(driver):
             if "Error" in result or "not found" in result:
                 return jsonify({"error": result}), 400
 
+            # Add a small delay to allow for any navigation to start
+            time.sleep(0.5)
+
+            # Reinject the console logging script
+            driver.execute_script(get_console_logging_script())
+
             message = "Element clicked successfully by XPath"
         else:
             # JavaScript to click at specific coordinates
@@ -301,8 +447,21 @@ def click_element(driver):
             if "Error" in result:
                 return jsonify({"error": result}), 400
 
+            # Add the same logging reinjection here
+            driver.execute_script(get_console_logging_script())
+
             message = f"Clicked at coordinates ({x}, {y})"
 
+        # Wait a moment for any navigation
+        time.sleep(0.5)
+        
+        # Reinject logging script
+        driver.execute_script(get_console_logging_script())
+        
+        # Restore previous logs
+        if existing_logs:
+            driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
+        
         return jsonify({
             "message": message,
             "result": result
@@ -405,23 +564,23 @@ def go_to_url(driver):
     try:
         print(f"Attempting to navigate to: {url}")
         
-        # Get the initial page load state
-        initial_state = driver.execute_script('return document.readyState')
+        # Before navigation, get any existing logs
+        existing_logs = driver.execute_script("return window._consoleLogs || [];")
         
-        # Navigate to URL
+        # Perform navigation
         driver.get(url)
         
-        # Wait for page load to complete with a more robust approach
-        try:
-            WebDriverWait(driver, timeout).until(
-                lambda d: (
-                    d.execute_script('return document.readyState') == 'complete' and
-                    d.execute_script('return document.readyState') != initial_state
-                )
-            )
-            print("Page loaded completely")
-        except TimeoutException:
-            print(f"Page did not fully load within {timeout} seconds, but proceeding anyway")
+        # Wait for page load
+        WebDriverWait(driver, timeout).until(
+            lambda d: d.execute_script('return document.readyState') == 'complete'
+        )
+        
+        # Reinject logging script
+        driver.execute_script(get_console_logging_script())
+        
+        # Restore previous logs
+        if existing_logs:
+            driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
         
         # Rest of the function remains the same...
         try:
@@ -440,6 +599,9 @@ def go_to_url(driver):
         if js_errors:
             print("JavaScript errors encountered:", js_errors)
         
+        # Reinject the console logging script
+        driver.execute_script(get_console_logging_script())
+
         return jsonify({
             "message": "Navigation attempt completed",
             "current_url": current_url,
@@ -913,66 +1075,115 @@ def get_console_log(driver):
     debugging_port = request.args.get('debugging_port', 9222)
 
     try:
-        # First, get any existing console logs using browser's log capability
-        browser_logs = []
-        try:
-            logs = driver.get_log('browser')
-            for entry in logs:
-                browser_logs.append({
-                    'level': entry.get('level', 'unknown'),
-                    'message': entry.get('message', ''),
-                    'timestamp': entry.get('timestamp', 0)
-                })
-        except:
-            # Some browsers might not support get_log
-            pass
+        # First, check if our logging is initialized
+        is_initialized = driver.execute_script("""
+            return window._consoleLogs !== undefined;
+        """)
+        
+        print(f"Logging initialized: {is_initialized}")
 
-        # Then inject our console logging code for future logs
-        driver.execute_script("""
-            if (!window._consoleLogsInitialized) {
+        # If not initialized, inject our logging script
+        if not is_initialized:
+            print("Initializing console logging...")
+            # Inject the logging script in parts to ensure it's all executed
+            driver.execute_script("""
+                // Create the storage array
                 window._consoleLogs = [];
-                window._consoleLogsInitialized = true;
                 
-                const original = {
-                    log: console.log,
-                    debug: console.debug,
-                    info: console.info,
-                    warn: console.warn,
-                    error: console.error
+                // Create a function to format messages
+                window._formatLogMessage = function(arg) {
+                    if (arg === null) return 'null';
+                    if (arg === undefined) return 'undefined';
+                    if (typeof arg === 'object') {
+                        try {
+                            return JSON.stringify(arg);
+                        } catch (e) {
+                            return String(arg);
+                        }
+                    }
+                    return String(arg);
                 };
+            """)
 
-                ['log', 'debug', 'info', 'warn', 'error'].forEach(function(level) {
-                    console[level] = function() {
-                        const args = Array.prototype.slice.call(arguments);
+            # Override console methods
+            driver.execute_script("""
+                ['log', 'info', 'warn', 'error', 'debug'].forEach(function(method) {
+                    const originalFn = console[method];
+                    console[method] = function(...args) {
+                        const message = Array.from(args).map(window._formatLogMessage).join(' ');
                         window._consoleLogs.push({
-                            level: level,
-                            message: args.map(arg => 
-                                typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-                            ).join(' '),
-                            timestamp: new Date().getTime()
+                            level: method,
+                            message: message,
+                            timestamp: new Date().toISOString(),
+                            url: window.location.href
                         });
-                        original[level].apply(console, arguments);
+                        originalFn.apply(console, args);
                     };
                 });
-            }
-        """)
+            """)
 
-        # Get any logs captured by our injected code
-        js_logs = driver.execute_script("return window._consoleLogs || [];")
+            # Add error listeners
+            driver.execute_script("""
+                window.addEventListener('error', function(event) {
+                    window._consoleLogs.push({
+                        level: 'error',
+                        message: event.message,
+                        timestamp: new Date().toISOString(),
+                        url: event.filename,
+                        line: event.lineno,
+                        column: event.colno
+                    });
+                });
+
+                window.addEventListener('unhandledrejection', function(event) {
+                    window._consoleLogs.push({
+                        level: 'error',
+                        message: 'Unhandled Promise Rejection: ' + event.reason,
+                        timestamp: new Date().toISOString(),
+                        url: window.location.href
+                    });
+                });
+            """)
+
+            print("Console logging initialization complete")
+
+        # Get the logs
+        logs = driver.execute_script("return window._consoleLogs;")
+        print(f"Retrieved {len(logs) if logs else 0} logs")
         
-        # Combine both sets of logs and sort by timestamp
-        all_logs = browser_logs + js_logs
-        all_logs.sort(key=lambda x: x['timestamp'])
-
+        # Verify logs exist
+        if not logs:
+            print("No logs found, checking console directly...")
+            # Try to directly log and retrieve
+            driver.execute_script("""
+                if (!window._consoleLogs) {
+                    console.error('_consoleLogs is undefined!');
+                } else {
+                    console.log('Current log count:', window._consoleLogs.length);
+                }
+            """)
+        
         return jsonify({
             "message": "Console logs retrieved successfully",
-            "logs": all_logs
+            "logs": logs
         }), 200
 
-    except WebDriverException as e:
-        return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
     except Exception as e:
-        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+        print(f"Error getting console logs: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": f"Failed to get console logs: {str(e)}"}), 500
+
+# Add a method to clear logs if needed
+@app.route('/clear_console_log', methods=['POST'])
+@handle_alerts
+def clear_console_log(driver):
+    try:
+        driver.execute_script("window._consoleLogs = [];")
+        return jsonify({
+            "message": "Console logs cleared successfully"
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Failed to clear console logs: {str(e)}"}), 500
     
 @app.route('/folder-tree', methods=['GET'])
 def folder_tree():
