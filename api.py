@@ -913,30 +913,26 @@ def get_console_log(driver):
     debugging_port = request.args.get('debugging_port', 9222)
 
     try:
-        # Enable console log collection
-        driver.execute_cdp_cmd('Log.enable', {})
-        
-        # Get console entries
-        logs = driver.execute_cdp_cmd('Log.entries', {})
-        
-        # Format the logs
-        formatted_logs = []
-        for entry in logs.get('entries', []):
-            formatted_logs.append({
-                'level': entry.get('level', 'info'),
-                'message': entry.get('text', ''),
-                'timestamp': entry.get('timestamp', 0),
-                'url': entry.get('url', ''),
-                'lineNumber': entry.get('lineNumber'),
-                'stackTrace': entry.get('stackTrace')
-            })
-        
-        # Disable console log collection
-        driver.execute_cdp_cmd('Log.disable', {})
+        # Execute JavaScript to retrieve console logs
+        logs = driver.execute_script("""
+            var console_logs = [];
+            var original = window.console;
+            ['log', 'debug', 'info', 'warn', 'error'].forEach(function(level) {
+                console[level] = function() {
+                    console_logs.push({
+                        level: level,
+                        message: Array.prototype.slice.call(arguments).join(' '),
+                        timestamp: new Date().getTime()
+                    });
+                    original[level].apply(original, arguments);
+                };
+            });
+            return console_logs;
+        """)
         
         return jsonify({
             "message": "Console logs retrieved successfully",
-            "logs": formatted_logs
+            "logs": logs
         }), 200
 
     except WebDriverException as e:
