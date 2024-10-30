@@ -165,7 +165,6 @@ def start_browser():
             '--ignore-certificate-errors',  # Ignore SSL certificate errors
             '--disable-extensions',  # Disable extensions to reduce complexity
             '--disable-software-rasterizer',  # Disable software rasterizer
-            '--disable-gpu-sandbox',  # Disable GPU sandbox
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-infobars',
@@ -217,63 +216,95 @@ def connect_to_chrome(debugging_port=9222):
 def click_element(driver):
     data = request.json
     xpath = data.get('xpath')
+    x = data.get('x')
+    y = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
 
-    if not xpath:
-        return jsonify({"error": "XPath must be provided"}), 400
+    if not xpath and (x is None or y is None):
+        return jsonify({"error": "Either XPath or both x and y coordinates must be provided"}), 400
 
     try:
-        # Wait for the element to be present in the DOM
-        WebDriverWait(driver, wait_time).until(
-            EC.presence_of_element_located((By.XPATH, xpath))
-        )
+        if xpath:
+            # Wait for the element to be present in the DOM
+            WebDriverWait(driver, wait_time).until(
+                EC.presence_of_element_located((By.XPATH, xpath))
+            )
 
-        # JavaScript to forcefully click the element
-        force_click_script = """
-        function getElementByXpath(xpath) {
-            const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            return result.singleNodeValue;
-        }
+            # JavaScript to forcefully click the element by XPath
+            force_click_script = """
+            function getElementByXpath(xpath) {
+                const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                return result.singleNodeValue;
+            }
 
-        function forceClickElement(element) {
-            if (element) {
+            function forceClickElement(element) {
+                if (element) {
+                    try {
+                        // Scroll the element into view
+                        element.scrollIntoView({block: 'center', inline: 'center'});
+                        
+                        // Create a new mouse event
+                        const clickEvent = new MouseEvent('click', {
+                            view: window,
+                            bubbles: true,
+                            cancelable: true
+                        });
+                        
+                        // Dispatch the event to the element
+                        element.dispatchEvent(clickEvent);
+                        
+                        return "Click event dispatched to the element";
+                    } catch (error) {
+                        return "Error clicking the element: " + error.toString();
+                    }
+                } else {
+                    return "Element not found";
+                }
+            }
+
+            const element = getElementByXpath(arguments[0]);
+            return forceClickElement(element);
+            """
+
+            # Execute the JavaScript to click the element
+            result = driver.execute_script(force_click_script, xpath)
+
+            if "Error" in result or "not found" in result:
+                return jsonify({"error": result}), 400
+
+            message = "Element clicked successfully by XPath"
+        else:
+            # JavaScript to click at specific coordinates
+            click_at_coordinates_script = """
+            function clickAtCoordinates(x, y) {
                 try {
-                    // Scroll the element into view
-                    element.scrollIntoView({block: 'center', inline: 'center'});
-                    
-                    // Create a new mouse event
                     const clickEvent = new MouseEvent('click', {
                         view: window,
                         bubbles: true,
-                        cancelable: true
+                        cancelable: true,
+                        clientX: x,
+                        clientY: y
                     });
-                    
-                    // Dispatch the event to the element
-                    element.dispatchEvent(clickEvent);
-                    
-                    return "Click event dispatched to the element";
+                    document.elementFromPoint(x, y).dispatchEvent(clickEvent);
+                    return "Click event dispatched at coordinates (" + x + ", " + y + ")";
                 } catch (error) {
-                    return "Error clicking the element: " + error.toString();
+                    return "Error clicking at coordinates: " + error.toString();
                 }
-            } else {
-                return "Element not found";
             }
-        }
+            return clickAtCoordinates(arguments[0], arguments[1]);
+            """
 
-        const element = getElementByXpath(arguments[0]);
-        return forceClickElement(element);
-        """
+            # Execute the JavaScript to click at coordinates
+            result = driver.execute_script(click_at_coordinates_script, x, y)
 
-        # Execute the JavaScript to click the element
-        result = driver.execute_script(force_click_script, xpath)
+            if "Error" in result:
+                return jsonify({"error": result}), 400
 
-        if "Error" in result or "not found" in result:
-            return jsonify({"error": result}), 400
+            message = f"Clicked at coordinates ({x}, {y})"
 
         return jsonify({
-            "message": "Element clicked successfully",
-            "xpath": xpath,
+            "message": message,
             "result": result
         }), 200
 
@@ -882,26 +913,30 @@ def get_console_log(driver):
     debugging_port = request.args.get('debugging_port', 9222)
 
     try:
-        # Execute JavaScript to retrieve console logs
-        logs = driver.execute_script("""
-            var console_logs = [];
-            var original = window.console;
-            ['log', 'debug', 'info', 'warn', 'error'].forEach(function(level) {
-                console[level] = function() {
-                    console_logs.push({
-                        level: level,
-                        message: Array.prototype.slice.call(arguments).join(' '),
-                        timestamp: new Date().getTime()
-                    });
-                    original[level].apply(original, arguments);
-                };
-            });
-            return console_logs;
-        """)
+        # Enable console log collection
+        driver.execute_cdp_cmd('Log.enable', {})
+        
+        # Get console entries
+        logs = driver.execute_cdp_cmd('Log.entries', {})
+        
+        # Format the logs
+        formatted_logs = []
+        for entry in logs.get('entries', []):
+            formatted_logs.append({
+                'level': entry.get('level', 'info'),
+                'message': entry.get('text', ''),
+                'timestamp': entry.get('timestamp', 0),
+                'url': entry.get('url', ''),
+                'lineNumber': entry.get('lineNumber'),
+                'stackTrace': entry.get('stackTrace')
+            })
+        
+        # Disable console log collection
+        driver.execute_cdp_cmd('Log.disable', {})
         
         return jsonify({
             "message": "Console logs retrieved successfully",
-            "logs": logs
+            "logs": formatted_logs
         }), 200
 
     except WebDriverException as e:
