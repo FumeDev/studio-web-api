@@ -913,26 +913,60 @@ def get_console_log(driver):
     debugging_port = request.args.get('debugging_port', 9222)
 
     try:
-        # Execute JavaScript to retrieve console logs
-        logs = driver.execute_script("""
-            var console_logs = [];
-            var original = window.console;
-            ['log', 'debug', 'info', 'warn', 'error'].forEach(function(level) {
-                console[level] = function() {
-                    console_logs.push({
-                        level: level,
-                        message: Array.prototype.slice.call(arguments).join(' '),
-                        timestamp: new Date().getTime()
-                    });
-                    original[level].apply(original, arguments);
+        # First, get any existing console logs using browser's log capability
+        browser_logs = []
+        try:
+            logs = driver.get_log('browser')
+            for entry in logs:
+                browser_logs.append({
+                    'level': entry.get('level', 'unknown'),
+                    'message': entry.get('message', ''),
+                    'timestamp': entry.get('timestamp', 0)
+                })
+        except:
+            # Some browsers might not support get_log
+            pass
+
+        # Then inject our console logging code for future logs
+        driver.execute_script("""
+            if (!window._consoleLogsInitialized) {
+                window._consoleLogs = [];
+                window._consoleLogsInitialized = true;
+                
+                const original = {
+                    log: console.log,
+                    debug: console.debug,
+                    info: console.info,
+                    warn: console.warn,
+                    error: console.error
                 };
-            });
-            return console_logs;
+
+                ['log', 'debug', 'info', 'warn', 'error'].forEach(function(level) {
+                    console[level] = function() {
+                        const args = Array.prototype.slice.call(arguments);
+                        window._consoleLogs.push({
+                            level: level,
+                            message: args.map(arg => 
+                                typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+                            ).join(' '),
+                            timestamp: new Date().getTime()
+                        });
+                        original[level].apply(console, arguments);
+                    };
+                });
+            }
         """)
+
+        # Get any logs captured by our injected code
+        js_logs = driver.execute_script("return window._consoleLogs || [];")
         
+        # Combine both sets of logs and sort by timestamp
+        all_logs = browser_logs + js_logs
+        all_logs.sort(key=lambda x: x['timestamp'])
+
         return jsonify({
             "message": "Console logs retrieved successfully",
-            "logs": logs
+            "logs": all_logs
         }), 200
 
     except WebDriverException as e:
