@@ -234,19 +234,35 @@ def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
     
-    # Check if Chrome is already running
-    if is_chrome_running(debugging_port):
-        # Try to kill existing Chrome instance
-        try:
-            if os.name == 'nt':  # Windows
-                os.system(f'taskkill /F /IM chrome.exe')
-            else:  # Unix/Linux/MacOS
-                os.system('pkill -f "(Google)?Chrome"')
-            time.sleep(2)  # Wait for Chrome to fully close
-        except Exception as e:
-            return jsonify({
-                "error": f"Failed to kill existing Chrome instance: {str(e)}. Please close Chrome manually."
-            }), 500
+    # More thorough Chrome killing process
+    try:
+        if os.name == 'nt':  # Windows
+            # Kill chrome.exe and chromedriver.exe
+            os.system('taskkill /F /IM chrome.exe /T 2>nul')
+            os.system('taskkill /F /IM chromedriver.exe /T 2>nul')
+        else:  # Unix/Linux/MacOS
+            # Kill Chrome, Chromium, and chromedriver processes
+            kill_commands = [
+                'pkill -f "chrome"',
+                'pkill -f "chromium"',
+                'pkill -f "chromedriver"',
+                'killall -9 chrome',
+                'killall -9 chromium',
+                'killall -9 chromedriver'
+            ]
+            for cmd in kill_commands:
+                try:
+                    os.system(cmd)
+                except:
+                    pass
+            
+            # Additional cleanup for zombie processes
+            os.system('ps aux | grep -i "chrome" | grep -v grep | awk \'{print $2}\' | xargs -r kill -9')
+        
+        # Wait for processes to fully terminate
+        time.sleep(3)
+    except Exception as e:
+        print(f"Warning during Chrome cleanup: {str(e)}")
 
     chrome_path = data.get('chrome_path', '')
     display = data.get('display', ':1')
