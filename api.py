@@ -811,7 +811,9 @@ def look(driver):
             return jsonify({
                 "error": "Timed out waiting for page to load",
                 "error_content": error_content,
-                "error_screenshot": error_screenshot
+                "error_screenshot": error_screenshot,
+                "current_url": driver.current_url,
+                "page_title": driver.title
             }), 200  # Return 200 to allow further processing of the error
 
         # Attempt to capture viewport data with error handling
@@ -823,17 +825,28 @@ def look(driver):
             return jsonify({
                 "error": "Failed to capture DOM content",
                 "error_content": error_content,
-                "screenshot": screenshot if screenshot else driver.get_screenshot_as_base64()
+                "screenshot": screenshot if screenshot else driver.get_screenshot_as_base64(),
+                "current_url": driver.current_url,
+                "page_title": driver.title
             }), 200  # Return 200 to allow further processing of the error
 
         if screenshot is None:
             # If screenshot capture fails, return what we can
             return jsonify({
                 "error": "Failed to capture screenshot",
-                "dom_content": dom_content
+                "dom_content": dom_content,
+                "current_url": driver.current_url,
+                "page_title": driver.title
             }), 200  # Return 200 to allow further processing of the error
 
-        return Response(generate_response(screenshot, dom_content), content_type='application/json')
+        # Modified generate_response to include URL and title
+        response_data = {
+            "screenshot": screenshot,
+            "dom_content": dom_content,
+            "current_url": driver.current_url,
+            "page_title": driver.title
+        }
+        return jsonify(response_data)
     except Exception as e:
         # Capture any unexpected errors
         error_content = driver.page_source
@@ -841,7 +854,9 @@ def look(driver):
         return jsonify({
             "error": f"Unexpected error: {str(e)}",
             "error_content": error_content,
-            "error_screenshot": error_screenshot
+            "error_screenshot": error_screenshot,
+            "current_url": driver.current_url,
+            "page_title": driver.title
         }), 200  # Return 200 to allow further processing of the error
 
 def safe_capture_viewport_data(driver):
