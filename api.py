@@ -17,6 +17,7 @@ import requests
 import traceback
 
 from bs4 import BeautifulSoup
+import psutil
 
 
 def get_console_logging_script():
@@ -229,38 +230,32 @@ def handle_alerts(func):
                 time.sleep(1)
     return wrapper
 
+def kill_chrome_processes():
+    """Helper function to kill all Chrome-related processes"""
+    chrome_names = ['chrome', 'chromium', 'chromedriver']
+    
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            # Check process name and cmdline
+            proc_name = proc.info['name'].lower() if proc.info['name'] else ''
+            proc_cmdline = ' '.join(proc.info['cmdline']).lower() if proc.info['cmdline'] else ''
+            
+            # Kill if process matches any chrome-related names
+            if any(chrome_name in proc_name or chrome_name in proc_cmdline 
+                  for chrome_name in chrome_names):
+                proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
 @app.route('/start_browser', methods=['POST'])
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
     
-    # More thorough Chrome killing process
+    # Kill all Chrome processes
     try:
-        if os.name == 'nt':  # Windows
-            # Kill chrome.exe and chromedriver.exe
-            os.system('taskkill /F /IM chrome.exe /T 2>nul')
-            os.system('taskkill /F /IM chromedriver.exe /T 2>nul')
-        else:  # Unix/Linux/MacOS
-            # Kill Chrome, Chromium, and chromedriver processes
-            kill_commands = [
-                'pkill -f "chrome"',
-                'pkill -f "chromium"',
-                'pkill -f "chromedriver"',
-                'killall -9 chrome',
-                'killall -9 chromium',
-                'killall -9 chromedriver'
-            ]
-            for cmd in kill_commands:
-                try:
-                    os.system(cmd)
-                except:
-                    pass
-            
-            # Additional cleanup for zombie processes
-            os.system('ps aux | grep -i "chrome" | grep -v grep | awk \'{print $2}\' | xargs -r kill -9')
-        
-        # Wait for processes to fully terminate
-        time.sleep(3)
+        kill_chrome_processes()
+        time.sleep(1)  # Wait for processes to terminate
     except Exception as e:
         print(f"Warning during Chrome cleanup: {str(e)}")
 

@@ -57,3 +57,4 @@ xxhash==3.5.0
 yarl==1.9.4
 beautifulsoup4
 flask
+psutil
