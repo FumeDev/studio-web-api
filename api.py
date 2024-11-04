@@ -614,14 +614,16 @@ def go_to_url(driver):
 def type_input(driver):
     data = request.json
     input_text = data.get('text')
-    special_key = data.get('special_key')  # New parameter for special keys
+    special_key = data.get('special_key')
 
     if not input_text and not special_key:
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
+        actions = ActionChains(driver)
+        
         if special_key:
-            # Map of supported special keys
+            # Special key handling
             special_keys_map = {
                 'DELETE': Keys.DELETE,
                 'BACKSPACE': Keys.BACKSPACE,
@@ -654,21 +656,20 @@ def type_input(driver):
             key = special_keys_map.get(special_key.upper())
             if not key:
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
-                
-            driver.switch_to.active_element.send_keys(key)
             
+            actions.send_keys(key)
         else:
-            # Original text input logic
-            for char in input_text:
-                if char == ' ':
-                    driver.switch_to.active_element.send_keys(Keys.SPACE)
-                else:
-                    driver.switch_to.active_element.send_keys(char)
-                time.sleep(0.1)  # Add a small delay between keypresses
+            # Send the text directly
+            actions.send_keys(input_text)
         
+        # Perform the action
+        actions.perform()
+
         return jsonify({
-            "message": "Input sent successfully",
+            "message": "Keys sent successfully",
+            "text": input_text if input_text else special_key
         }), 200
+
     except WebDriverException as e:
         return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
     except Exception as e:
