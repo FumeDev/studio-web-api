@@ -300,7 +300,6 @@ def start_browser():
             '--start-maximized',
             '--disable-gpu',  # Disable GPU hardware acceleration
             '--disable-dev-shm-usage',  # Overcome limited resource problems
-            '--disable-extensions',  # Disable extensions to reduce complexity
             '--disable-software-rasterizer',  # Disable software rasterizer
             '--no-first-run',
             '--no-default-browser-check',
@@ -363,48 +362,39 @@ def connect_to_chrome(debugging_port=9222):
 def click_element(driver):
     data = request.json
     xpath = data.get('xpath')
-    x = data.get('x')
-    y = data.get('y')
+    x_coord = data.get('x')
+    y_coord = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
 
-    if not xpath and (x is None or y is None):
-        return jsonify({"error": "Either XPath or both x and y coordinates must be provided"}), 400
+    if not xpath and (x_coord is None or y_coord is None):
+        return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
 
     try:
         # Before click, get any existing logs
         existing_logs = driver.execute_script("return window._consoleLogs || [];")
-        
-        # Perform click
+
         if xpath:
-            # Wait for the element to be present in the DOM
+            # XPath-based clicking logic
             WebDriverWait(driver, wait_time).until(
                 EC.presence_of_element_located((By.XPATH, xpath))
             )
-
-            # JavaScript to forcefully click the element by XPath
+            
             force_click_script = """
             function getElementByXpath(xpath) {
                 const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
                 return result.singleNodeValue;
             }
-
             function forceClickElement(element) {
                 if (element) {
                     try {
-                        // Scroll the element into view
                         element.scrollIntoView({block: 'center', inline: 'center'});
-                        
-                        // Create a new mouse event
                         const clickEvent = new MouseEvent('click', {
                             view: window,
                             bubbles: true,
                             cancelable: true
                         });
-                        
-                        // Dispatch the event to the element
                         element.dispatchEvent(clickEvent);
-                        
                         return "Click event dispatched to the element";
                     } catch (error) {
                         return "Error clicking the element: " + error.toString();
@@ -413,68 +403,33 @@ def click_element(driver):
                     return "Element not found";
                 }
             }
-
             const element = getElementByXpath(arguments[0]);
             return forceClickElement(element);
             """
-
-            # Execute the JavaScript to click the element
             result = driver.execute_script(force_click_script, xpath)
-
+            
             if "Error" in result or "not found" in result:
                 return jsonify({"error": result}), 400
-
-            # Add a small delay to allow for any navigation to start
-            time.sleep(0.5)
-
-            # Reinject the console logging script
-            driver.execute_script(get_console_logging_script())
-
-            message = "Element clicked successfully by XPath"
         else:
-            # JavaScript to click at specific coordinates
-            click_at_coordinates_script = """
-            function clickAtCoordinates(x, y) {
-                try {
-                    const clickEvent = new MouseEvent('click', {
-                        view: window,
-                        bubbles: true,
-                        cancelable: true,
-                        clientX: x,
-                        clientY: y
-                    });
-                    document.elementFromPoint(x, y).dispatchEvent(clickEvent);
-                    return "Click event dispatched at coordinates (" + x + ", " + y + ")";
-                } catch (error) {
-                    return "Error clicking at coordinates: " + error.toString();
-                }
-            }
-            return clickAtCoordinates(arguments[0], arguments[1]);
-            """
+            # Coordinate-based clicking using ActionChains
+            actions = ActionChains(driver)
+            actions.move_by_offset(x_coord, y_coord)
+            actions.click()
+            actions.perform()
+            result = "Click performed at coordinates"
 
-            # Execute the JavaScript to click at coordinates
-            result = driver.execute_script(click_at_coordinates_script, x, y)
-
-            if "Error" in result:
-                return jsonify({"error": result}), 400
-
-            # Add the same logging reinjection here
-            driver.execute_script(get_console_logging_script())
-
-            message = f"Clicked at coordinates ({x}, {y})"
-
-        # Wait a moment for any navigation
+        # Add a small delay to allow for any navigation to start
         time.sleep(0.5)
-        
+
         # Reinject logging script
         driver.execute_script(get_console_logging_script())
-        
+
         # Restore previous logs
         if existing_logs:
             driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
-        
+
         return jsonify({
-            "message": message,
+            "message": "Click action performed successfully",
             "result": result
         }), 200
 
