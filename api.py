@@ -614,8 +614,6 @@ def go_to_url(driver):
 def type_input(driver):
     data = request.json
     input_text = data.get('text')
-    debugging_port = data.get('debugging_port', 9222)
-    wait_time = data.get('wait_time', 10)
 
     if not input_text:
         return jsonify({"error": "Input text must be provided"}), 400
