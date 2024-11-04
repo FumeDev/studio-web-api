@@ -614,21 +614,60 @@ def go_to_url(driver):
 def type_input(driver):
     data = request.json
     input_text = data.get('text')
+    special_key = data.get('special_key')  # New parameter for special keys
 
-    if not input_text:
-        return jsonify({"error": "Input text must be provided"}), 400
+    if not input_text and not special_key:
+        return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
-        # Type the input text character by character
-        for char in input_text:
-            if char == ' ':
-                driver.switch_to.active_element.send_keys(Keys.SPACE)
-            else:
-                driver.switch_to.active_element.send_keys(char)
-            time.sleep(0.1)  # Add a small delay between keypresses
+        if special_key:
+            # Map of supported special keys
+            special_keys_map = {
+                'DELETE': Keys.DELETE,
+                'BACKSPACE': Keys.BACKSPACE,
+                'TAB': Keys.TAB,
+                'RETURN': Keys.RETURN,
+                'ENTER': Keys.ENTER,
+                'PAGE_UP': Keys.PAGE_UP,
+                'PAGE_DOWN': Keys.PAGE_DOWN,
+                'HOME': Keys.HOME,
+                'END': Keys.END,
+                'ESCAPE': Keys.ESCAPE,
+                'UP': Keys.UP,
+                'DOWN': Keys.DOWN,
+                'LEFT': Keys.LEFT,
+                'RIGHT': Keys.RIGHT,
+                'F1': Keys.F1,
+                'F2': Keys.F2,
+                'F3': Keys.F3,
+                'F4': Keys.F4,
+                'F5': Keys.F5,
+                'F6': Keys.F6,
+                'F7': Keys.F7,
+                'F8': Keys.F8,
+                'F9': Keys.F9,
+                'F10': Keys.F10,
+                'F11': Keys.F11,
+                'F12': Keys.F12,
+            }
+            
+            key = special_keys_map.get(special_key.upper())
+            if not key:
+                return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
+                
+            driver.switch_to.active_element.send_keys(key)
+            
+        else:
+            # Original text input logic
+            for char in input_text:
+                if char == ' ':
+                    driver.switch_to.active_element.send_keys(Keys.SPACE)
+                else:
+                    driver.switch_to.active_element.send_keys(char)
+                time.sleep(0.1)  # Add a small delay between keypresses
         
         return jsonify({
-            "message": "Input typed successfully",
+            "message": "Input sent successfully",
         }), 200
     except WebDriverException as e:
         return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
