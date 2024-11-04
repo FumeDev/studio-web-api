@@ -656,28 +656,80 @@ def type_input(driver):
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
             
             script = """
-                const event = new KeyboardEvent('keydown', {
-                    key: arguments[0],
-                    code: arguments[0],
-                    bubbles: true,
-                    cancelable: true
-                });
-                document.dispatchEvent(event);
-            """
-            driver.execute_script(script, key)
-        else:
-            # Text input using JavaScript
-            for char in input_text:
-                script = """
+                function simulateKeyEvent(key) {
+                    // Handle active element if it's an input or textarea
+                    const activeElement = document.activeElement;
+                    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+                        if (key === 'Backspace' || key === 'Delete') {
+                            const start = activeElement.selectionStart;
+                            const end = activeElement.selectionEnd;
+                            const value = activeElement.value;
+                            
+                            if (start !== end) {
+                                // Text is selected, remove it
+                                activeElement.value = value.slice(0, start) + value.slice(end);
+                                activeElement.setSelectionRange(start, start);
+                            } else if (key === 'Backspace' && start > 0) {
+                                // Remove character before cursor
+                                activeElement.value = value.slice(0, start - 1) + value.slice(start);
+                                activeElement.setSelectionRange(start - 1, start - 1);
+                            } else if (key === 'Delete' && start < value.length) {
+                                // Remove character after cursor
+                                activeElement.value = value.slice(0, start) + value.slice(start + 1);
+                                activeElement.setSelectionRange(start, start);
+                            }
+                            
+                            // Trigger input event
+                            activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+                            return;
+                        }
+                    }
+                    
+                    // Dispatch keydown event to document
                     const event = new KeyboardEvent('keydown', {
-                        key: arguments[0],
-                        code: 'Key' + arguments[0].toUpperCase(),
+                        key: key,
+                        code: key,
                         bubbles: true,
                         cancelable: true
                     });
                     document.dispatchEvent(event);
-                """
-                driver.execute_script(script, char)
+                }
+                simulateKeyEvent(arguments[0]);
+            """
+            driver.execute_script(script, key)
+        else:
+            # Text input using JavaScript
+            script = """
+                function simulateTextInput(text) {
+                    const activeElement = document.activeElement;
+                    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+                        const start = activeElement.selectionStart;
+                        const end = activeElement.selectionEnd;
+                        const value = activeElement.value;
+                        
+                        // Replace selected text or insert at cursor position
+                        activeElement.value = value.slice(0, start) + text + value.slice(end);
+                        const newPos = start + text.length;
+                        activeElement.setSelectionRange(newPos, newPos);
+                        
+                        // Trigger input event
+                        activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+                    } else {
+                        // If no input element is focused, send key events to document
+                        for (let char of text) {
+                            const event = new KeyboardEvent('keydown', {
+                                key: char,
+                                code: 'Key' + char.toUpperCase(),
+                                bubbles: true,
+                                cancelable: true
+                            });
+                            document.dispatchEvent(event);
+                        }
+                    }
+                }
+                simulateTextInput(arguments[0]);
+            """
+            driver.execute_script(script, input_text)
 
         return jsonify({
             "message": "Keys sent successfully",
