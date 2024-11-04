@@ -620,50 +620,64 @@ def type_input(driver):
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
-        actions = ActionChains(driver)
-        
         if special_key:
-            # Special key handling
+            # Special key handling using JavaScript
             special_keys_map = {
-                'DELETE': Keys.DELETE,
-                'BACKSPACE': Keys.BACKSPACE,
-                'TAB': Keys.TAB,
-                'RETURN': Keys.RETURN,
-                'ENTER': Keys.ENTER,
-                'PAGE_UP': Keys.PAGE_UP,
-                'PAGE_DOWN': Keys.PAGE_DOWN,
-                'HOME': Keys.HOME,
-                'END': Keys.END,
-                'ESCAPE': Keys.ESCAPE,
-                'UP': Keys.UP,
-                'DOWN': Keys.DOWN,
-                'LEFT': Keys.LEFT,
-                'RIGHT': Keys.RIGHT,
-                'F1': Keys.F1,
-                'F2': Keys.F2,
-                'F3': Keys.F3,
-                'F4': Keys.F4,
-                'F5': Keys.F5,
-                'F6': Keys.F6,
-                'F7': Keys.F7,
-                'F8': Keys.F8,
-                'F9': Keys.F9,
-                'F10': Keys.F10,
-                'F11': Keys.F11,
-                'F12': Keys.F12,
+                'DELETE': 'Delete',
+                'BACKSPACE': 'Backspace',
+                'TAB': 'Tab',
+                'RETURN': 'Enter',
+                'ENTER': 'Enter',
+                'PAGE_UP': 'PageUp',
+                'PAGE_DOWN': 'PageDown',
+                'HOME': 'Home',
+                'END': 'End',
+                'ESCAPE': 'Escape',
+                'UP': 'ArrowUp',
+                'DOWN': 'ArrowDown',
+                'LEFT': 'ArrowLeft',
+                'RIGHT': 'ArrowRight',
+                'F1': 'F1',
+                'F2': 'F2',
+                'F3': 'F3',
+                'F4': 'F4',
+                'F5': 'F5',
+                'F6': 'F6',
+                'F7': 'F7',
+                'F8': 'F8',
+                'F9': 'F9',
+                'F10': 'F10',
+                'F11': 'F11',
+                'F12': 'F12',
             }
             
             key = special_keys_map.get(special_key.upper())
             if not key:
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
             
-            actions.send_keys(key)
+            script = """
+                const event = new KeyboardEvent('keydown', {
+                    key: arguments[0],
+                    code: arguments[0],
+                    bubbles: true,
+                    cancelable: true
+                });
+                document.dispatchEvent(event);
+            """
+            driver.execute_script(script, key)
         else:
-            # Send the text directly
-            actions.send_keys(input_text)
-        
-        # Perform the action
-        actions.perform()
+            # Text input using JavaScript
+            for char in input_text:
+                script = """
+                    const event = new KeyboardEvent('keydown', {
+                        key: arguments[0],
+                        code: 'Key' + arguments[0].toUpperCase(),
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    document.dispatchEvent(event);
+                """
+                driver.execute_script(script, char)
 
         return jsonify({
             "message": "Keys sent successfully",
