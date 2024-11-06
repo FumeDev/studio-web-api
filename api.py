@@ -16,11 +16,8 @@ import subprocess
 import requests
 import traceback
 
-os.environ['DISPLAY'] = ':1'
-
 from bs4 import BeautifulSoup
 import psutil
-import pyautogui
 
 
 def get_console_logging_script():
@@ -616,58 +613,74 @@ def type_input(driver):
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
-        # First ensure browser window has focus
-        driver.execute_script("window.focus();")
-        
-        # Click on the active element to ensure it has focus
-        active_element = driver.switch_to.active_element
-        if active_element:
-            actions = ActionChains(driver)
-            actions.click(active_element)
-            actions.perform()
-        
-        # Small delay to ensure focus is set
-        time.sleep(0.1)
-        
         if special_key:
-            # Map special keys to pyautogui keys
+            # Map special keys to Selenium Keys
             special_keys_map = {
-                'DELETE': 'delete',
-                'BACKSPACE': 'backspace',
-                'TAB': 'tab',
-                'RETURN': 'return',
-                'ENTER': 'enter',
-                'PAGE_UP': 'pageup',
-                'PAGE_DOWN': 'pagedown',
-                'HOME': 'home',
-                'END': 'end',
-                'ESCAPE': 'esc',
-                'UP': 'up',
-                'DOWN': 'down',
-                'LEFT': 'left',
-                'RIGHT': 'right',
-                'F1': 'f1',
-                'F2': 'f2',
-                'F3': 'f3',
-                'F4': 'f4',
-                'F5': 'f5',
-                'F6': 'f6',
-                'F7': 'f7',
-                'F8': 'f8',
-                'F9': 'f9',
-                'F10': 'f10',
-                'F11': 'f11',
-                'F12': 'f12',
+                'DELETE': Keys.DELETE,
+                'BACKSPACE': Keys.BACK_SPACE,
+                'TAB': Keys.TAB,
+                'RETURN': Keys.RETURN,
+                'ENTER': Keys.ENTER,
+                'PAGE_UP': Keys.PAGE_UP,
+                'PAGE_DOWN': Keys.PAGE_DOWN,
+                'HOME': Keys.HOME,
+                'END': Keys.END,
+                'ESCAPE': Keys.ESCAPE,
+                'UP': Keys.UP,
+                'DOWN': Keys.DOWN,
+                'LEFT': Keys.LEFT,
+                'RIGHT': Keys.RIGHT,
+                'F1': Keys.F1,
+                # ... other special keys ...
             }
             
             key = special_keys_map.get(special_key.upper())
             if not key:
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
             
-            pyautogui.press(key)
+            driver.execute_script("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {'key': arguments[0]}))", special_key)
+            driver.execute_script("document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {'key': arguments[0]}))", special_key)
         else:
-            # Type the text character by character with a small delay
-            pyautogui.write(input_text, interval=0.05)
+            # Use JavaScript to simulate keyboard events with explicit key values
+            for char in input_text:
+                # Simulate both keydown and keyup events with explicit key value
+                driver.execute_script("""
+                    const char = arguments[0];
+                    const el = document.activeElement;
+                    
+                    // KeyDown event
+                    const downEvent = new KeyboardEvent('keydown', {
+                        key: char,
+                        code: 'Key' + char.toUpperCase(),
+                        keyCode: char.charCodeAt(0),
+                        which: char.charCodeAt(0),
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    el.dispatchEvent(downEvent);
+                    
+                    // Input event
+                    const inputEvent = new InputEvent('input', {
+                        inputType: 'insertText',
+                        data: char,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    el.dispatchEvent(inputEvent);
+                    
+                    // KeyUp event
+                    const upEvent = new KeyboardEvent('keyup', {
+                        key: char,
+                        code: 'Key' + char.toUpperCase(),
+                        keyCode: char.charCodeAt(0),
+                        which: char.charCodeAt(0),
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    el.dispatchEvent(upEvent);
+                """, char)
+                
+                time.sleep(0.05)  # Small delay between characters
 
         return jsonify({
             "message": "Keys sent successfully",
