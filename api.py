@@ -625,6 +625,16 @@ def type_input(driver):
     if not input_text and not special_key:
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
+    # Click on the body element to shift focus
+    try:
+        body = driver.find_element(By.TAG_NAME, "body")
+        driver.execute_script("arguments[0].click();", body)
+        print("Clicked on body element to shift focus")
+    except NoSuchElementException:
+        print("No body element found, page might not have loaded correctly")
+    except Exception as click_error:
+        print(f"Failed to click body element: {str(click_error)}")
+
     try:
         if special_key:
             # Map special keys to PyAutoGUI keys
