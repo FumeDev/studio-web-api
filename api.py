@@ -551,37 +551,6 @@ def go_to_url(driver):
         if existing_logs:
             driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
         
-        # Multiple attempts to shift focus from address bar
-        try:
-            # 1. Click body using JavaScript
-            driver.execute_script("""
-                document.body.click();
-                document.body.focus();
-                
-                // Create and trigger a tab press to move focus
-                const tabEvent = new KeyboardEvent('keydown', {
-                    key: 'Tab',
-                    code: 'Tab',
-                    keyCode: 9,
-                    which: 9,
-                    bubbles: true,
-                    cancelable: true
-                });
-                document.body.dispatchEvent(tabEvent);
-            """)
-            
-            # 2. Use ActionChains for an additional click
-            actions = ActionChains(driver)
-            body = driver.find_element(By.TAG_NAME, "body")
-            actions.move_to_element(body).click().perform()
-            
-            # 3. Send an escape key to dismiss any potential focus
-            actions.send_keys(Keys.ESCAPE).perform()
-            
-            print("Multiple focus shift attempts completed")
-        except Exception as click_error:
-            print(f"Failed to shift focus: {str(click_error)}")
-        
         current_url = driver.current_url
         page_title = driver.title
         
@@ -647,88 +616,48 @@ def type_input(driver):
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
-        # More aggressive focus shifting approach
-        driver.execute_script("""
-            // 1. Force focus on document body
-            document.body.focus();
-            
-            // 2. Create and dispatch multiple events to ensure focus
-            ['mousedown', 'mouseup', 'click'].forEach(eventType => {
-                document.body.dispatchEvent(new MouseEvent(eventType, {
-                    view: window,
-                    bubbles: true,
-                    cancelable: true,
-                    buttons: 1
-                }));
-            });
-            
-            // 3. Focus on any input element if present
-            const focusableElements = document.querySelector('input, textarea, [contenteditable="true"]');
-            if (focusableElements) {
-                focusableElements.focus();
-            }
-            
-            // 4. Create a temporary input element if no focusable elements exist
-            if (!document.activeElement || document.activeElement === document.body) {
-                const temp = document.createElement('input');
-                temp.style.position = 'absolute';
-                temp.style.opacity = '0';
-                temp.style.height = '0px';
-                temp.style.width = '0px';
-                document.body.appendChild(temp);
-                temp.focus();
-                // Remove after a brief delay
-                setTimeout(() => temp.remove(), 100);
-            }
-        """)
-
-        # Use ActionChains for additional focus assurance
         actions = ActionChains(driver)
-        actions.move_by_offset(100, 100).click().perform()  # Click in a safe area
-        actions.send_keys(Keys.TAB).perform()  # Tab to ensure focus is within the page
-        actions.send_keys(Keys.ESCAPE).perform()  # Dismiss any potential overlays
-
-        # Small delay to ensure focus is set
-        time.sleep(0.1)
-
+        
         if special_key:
-            # Map special keys to PyAutoGUI keys
+            # Map special keys to Selenium Keys
             special_keys_map = {
-                'DELETE': 'delete',
-                'BACKSPACE': 'backspace',
-                'TAB': 'tab',
-                'RETURN': 'enter',
-                'ENTER': 'enter',
-                'PAGE_UP': 'pageup',
-                'PAGE_DOWN': 'pagedown',
-                'HOME': 'home',
-                'END': 'end',
-                'ESCAPE': 'esc',
-                'UP': 'up',
-                'DOWN': 'down',
-                'LEFT': 'left',
-                'RIGHT': 'right',
-                'F1': 'f1',
-                'F2': 'f2',
-                'F3': 'f3',
-                'F4': 'f4',
-                'F5': 'f5',
-                'F6': 'f6',
-                'F7': 'f7',
-                'F8': 'f8',
-                'F9': 'f9',
-                'F10': 'f10',
-                'F11': 'f11',
-                'F12': 'f12',
+                'DELETE': Keys.DELETE,
+                'BACKSPACE': Keys.BACK_SPACE,
+                'TAB': Keys.TAB,
+                'RETURN': Keys.RETURN,
+                'ENTER': Keys.ENTER,
+                'PAGE_UP': Keys.PAGE_UP,
+                'PAGE_DOWN': Keys.PAGE_DOWN,
+                'HOME': Keys.HOME,
+                'END': Keys.END,
+                'ESCAPE': Keys.ESCAPE,
+                'UP': Keys.UP,
+                'DOWN': Keys.DOWN,
+                'LEFT': Keys.LEFT,
+                'RIGHT': Keys.RIGHT,
+                'F1': Keys.F1,
+                'F2': Keys.F2,
+                'F3': Keys.F3,
+                'F4': Keys.F4,
+                'F5': Keys.F5,
+                'F6': Keys.F6,
+                'F7': Keys.F7,
+                'F8': Keys.F8,
+                'F9': Keys.F9,
+                'F10': Keys.F10,
+                'F11': Keys.F11,
+                'F12': Keys.F12,
             }
             
             key = special_keys_map.get(special_key.upper())
             if not key:
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
             
-            pyautogui.press(key)
+            actions.send_keys(key)
         else:
-            pyautogui.write(input_text)
+            actions.send_keys(input_text)
+
+        actions.perform()
 
         return jsonify({
             "message": "Keys sent successfully",
