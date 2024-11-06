@@ -16,6 +16,8 @@ import subprocess
 import requests
 import traceback
 
+os.environ['DISPLAY'] = ':1'
+
 from bs4 import BeautifulSoup
 import psutil
 import pyautogui
