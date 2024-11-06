@@ -18,6 +18,7 @@ import traceback
 
 from bs4 import BeautifulSoup
 import psutil
+import pyautogui
 
 
 def get_console_logging_script():
@@ -620,76 +621,50 @@ def type_input(driver):
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
-        # Try to get the active element
-        active_element = driver.execute_script("""
-            var element = document.activeElement;
-            if (element === document.body || element === document.documentElement) {
-                // If no element is focused or body/html is focused, try to find a suitable input
-                element = document.querySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), [contenteditable="true"]');
-                if (element) {
-                    element.focus();
-                }
-            }
-            return element && element !== document.body && element !== document.documentElement;
-        """)
-
-        if not active_element:
-            return jsonify({
-                "error": "No suitable input element found or focused on the page"
-            }), 400
-
-        # Get the actual focused element
-        focused_element = driver.switch_to.active_element
-
         if special_key:
-            # Map special keys to Selenium Keys
+            # Map special keys to PyAutoGUI keys
             special_keys_map = {
-                'DELETE': Keys.DELETE,
-                'BACKSPACE': Keys.BACKSPACE,
-                'TAB': Keys.TAB,
-                'RETURN': Keys.RETURN,
-                'ENTER': Keys.ENTER,
-                'PAGE_UP': Keys.PAGE_UP,
-                'PAGE_DOWN': Keys.PAGE_DOWN,
-                'HOME': Keys.HOME,
-                'END': Keys.END,
-                'ESCAPE': Keys.ESCAPE,
-                'UP': Keys.UP,
-                'DOWN': Keys.DOWN,
-                'LEFT': Keys.LEFT,
-                'RIGHT': Keys.RIGHT,
-                'F1': Keys.F1,
-                'F2': Keys.F2,
-                'F3': Keys.F3,
-                'F4': Keys.F4,
-                'F5': Keys.F5,
-                'F6': Keys.F6,
-                'F7': Keys.F7,
-                'F8': Keys.F8,
-                'F9': Keys.F9,
-                'F10': Keys.F10,
-                'F11': Keys.F11,
-                'F12': Keys.F12,
+                'DELETE': 'delete',
+                'BACKSPACE': 'backspace',
+                'TAB': 'tab',
+                'RETURN': 'enter',
+                'ENTER': 'enter',
+                'PAGE_UP': 'pageup',
+                'PAGE_DOWN': 'pagedown',
+                'HOME': 'home',
+                'END': 'end',
+                'ESCAPE': 'esc',
+                'UP': 'up',
+                'DOWN': 'down',
+                'LEFT': 'left',
+                'RIGHT': 'right',
+                'F1': 'f1',
+                'F2': 'f2',
+                'F3': 'f3',
+                'F4': 'f4',
+                'F5': 'f5',
+                'F6': 'f6',
+                'F7': 'f7',
+                'F8': 'f8',
+                'F9': 'f9',
+                'F10': 'f10',
+                'F11': 'f11',
+                'F12': 'f12',
             }
             
             key = special_keys_map.get(special_key.upper())
             if not key:
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
             
-            focused_element.send_keys(key)
+            pyautogui.press(key)
         else:
-            focused_element.send_keys(input_text)
+            pyautogui.write(input_text)
 
         return jsonify({
             "message": "Keys sent successfully",
             "text": input_text if input_text else special_key
         }), 200
 
-    except WebDriverException as e:
-        return jsonify({
-            "error": f"WebDriver error: {str(e)}",
-            "details": "No suitable input element found or element is not interactable"
-        }), 500
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
         
