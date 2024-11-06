@@ -620,9 +620,27 @@ def type_input(driver):
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
-        # Get the active element using JavaScript
-        active_element = driver.execute_script("return document.activeElement")
-        
+        # Try to get the active element
+        active_element = driver.execute_script("""
+            var element = document.activeElement;
+            if (element === document.body || element === document.documentElement) {
+                // If no element is focused or body/html is focused, try to find a suitable input
+                element = document.querySelector('input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), [contenteditable="true"]');
+                if (element) {
+                    element.focus();
+                }
+            }
+            return element && element !== document.body && element !== document.documentElement;
+        """)
+
+        if not active_element:
+            return jsonify({
+                "error": "No suitable input element found or focused on the page"
+            }), 400
+
+        # Get the actual focused element
+        focused_element = driver.switch_to.active_element
+
         if special_key:
             # Map special keys to Selenium Keys
             special_keys_map = {
@@ -658,9 +676,9 @@ def type_input(driver):
             if not key:
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
             
-            active_element.send_keys(key)
+            focused_element.send_keys(key)
         else:
-            active_element.send_keys(input_text)
+            focused_element.send_keys(input_text)
 
         return jsonify({
             "message": "Keys sent successfully",
@@ -668,7 +686,10 @@ def type_input(driver):
         }), 200
 
     except WebDriverException as e:
-        return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
+        return jsonify({
+            "error": f"WebDriver error: {str(e)}",
+            "details": "No suitable input element found or element is not interactable"
+        }), 500
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
         
