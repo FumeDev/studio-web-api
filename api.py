@@ -549,12 +549,15 @@ def go_to_url(driver):
         if existing_logs:
             driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
         
-        # Rest of the function remains the same...
+        # Click on the body element to shift focus
         try:
             body = driver.find_element(By.TAG_NAME, "body")
-            print("Body element found")
+            driver.execute_script("arguments[0].click();", body)
+            print("Clicked on body element to shift focus")
         except NoSuchElementException:
             print("No body element found, page might not have loaded correctly")
+        except Exception as click_error:
+            print(f"Failed to click body element: {str(click_error)}")
         
         current_url = driver.current_url
         page_title = driver.title
