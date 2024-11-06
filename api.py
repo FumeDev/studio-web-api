@@ -638,48 +638,72 @@ def type_input(driver):
             if not key:
                 return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
             
-            driver.execute_script("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {'key': arguments[0]}))", special_key)
-            driver.execute_script("document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {'key': arguments[0]}))", special_key)
+            # Use ActionChains for special keys
+            actions = ActionChains(driver)
+            actions.send_keys(key)
+            actions.perform()
         else:
-            # Use JavaScript to simulate keyboard events with explicit key values
-            for char in input_text:
-                # Simulate both keydown and keyup events with explicit key value
-                driver.execute_script("""
-                    const char = arguments[0];
+            # Use JavaScript to handle both focused and unfocused cases
+            js_script = """
+                function simulateKeyboardInput(char) {
                     const el = document.activeElement;
+                    const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
                     
-                    // KeyDown event
-                    const downEvent = new KeyboardEvent('keydown', {
+                    // Get current cursor position and text
+                    const start = isInput ? (el.selectionStart || 0) : 0;
+                    const end = isInput ? (el.selectionEnd || 0) : 0;
+                    const currentValue = isInput ? (el.value || '') : '';
+                    
+                    // Create and dispatch keydown event
+                    el.dispatchEvent(new KeyboardEvent('keydown', {
                         key: char,
                         code: 'Key' + char.toUpperCase(),
                         keyCode: char.charCodeAt(0),
                         which: char.charCodeAt(0),
                         bubbles: true,
                         cancelable: true
-                    });
-                    el.dispatchEvent(downEvent);
+                    }));
                     
-                    // Input event
-                    const inputEvent = new InputEvent('input', {
-                        inputType: 'insertText',
-                        data: char,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    el.dispatchEvent(inputEvent);
+                    if (isInput) {
+                        // Update input value at cursor position
+                        const newValue = currentValue.substring(0, start) + char + currentValue.substring(end);
+                        el.value = newValue;
+                        
+                        // Update cursor position
+                        el.setSelectionRange(start + 1, start + 1);
+                        
+                        // Trigger input event
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
                     
-                    // KeyUp event
-                    const upEvent = new KeyboardEvent('keyup', {
+                    // Create and dispatch keypress event
+                    el.dispatchEvent(new KeyboardEvent('keypress', {
                         key: char,
                         code: 'Key' + char.toUpperCase(),
                         keyCode: char.charCodeAt(0),
                         which: char.charCodeAt(0),
                         bubbles: true,
                         cancelable: true
-                    });
-                    el.dispatchEvent(upEvent);
-                """, char)
-                
+                    }));
+                    
+                    // Create and dispatch keyup event
+                    el.dispatchEvent(new KeyboardEvent('keyup', {
+                        key: char,
+                        code: 'Key' + char.toUpperCase(),
+                        keyCode: char.charCodeAt(0),
+                        which: char.charCodeAt(0),
+                        bubbles: true,
+                        cancelable: true
+                    }));
+                    
+                    return true;
+                }
+                return simulateKeyboardInput(arguments[0]);
+            """
+            
+            # Type each character individually
+            for char in input_text:
+                driver.execute_script(js_script, char)
                 time.sleep(0.05)  # Small delay between characters
 
         return jsonify({
