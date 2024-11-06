@@ -551,15 +551,36 @@ def go_to_url(driver):
         if existing_logs:
             driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
         
-        # Click on the body element to shift focus
+        # Multiple attempts to shift focus from address bar
         try:
+            # 1. Click body using JavaScript
+            driver.execute_script("""
+                document.body.click();
+                document.body.focus();
+                
+                // Create and trigger a tab press to move focus
+                const tabEvent = new KeyboardEvent('keydown', {
+                    key: 'Tab',
+                    code: 'Tab',
+                    keyCode: 9,
+                    which: 9,
+                    bubbles: true,
+                    cancelable: true
+                });
+                document.body.dispatchEvent(tabEvent);
+            """)
+            
+            # 2. Use ActionChains for an additional click
+            actions = ActionChains(driver)
             body = driver.find_element(By.TAG_NAME, "body")
-            driver.execute_script("arguments[0].click();", body)
-            print("Clicked on body element to shift focus")
-        except NoSuchElementException:
-            print("No body element found, page might not have loaded correctly")
+            actions.move_to_element(body).click().perform()
+            
+            # 3. Send an escape key to dismiss any potential focus
+            actions.send_keys(Keys.ESCAPE).perform()
+            
+            print("Multiple focus shift attempts completed")
         except Exception as click_error:
-            print(f"Failed to click body element: {str(click_error)}")
+            print(f"Failed to shift focus: {str(click_error)}")
         
         current_url = driver.current_url
         page_title = driver.title
@@ -625,15 +646,36 @@ def type_input(driver):
     if not input_text and not special_key:
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
-    # Click on the body element to shift focus
+    # Multiple attempts to shift focus from address bar
     try:
+        # 1. Click body using JavaScript
+        driver.execute_script("""
+            document.body.click();
+            document.body.focus();
+            
+            // Create and trigger a tab press to move focus
+            const tabEvent = new KeyboardEvent('keydown', {
+                key: 'Tab',
+                code: 'Tab',
+                keyCode: 9,
+                which: 9,
+                bubbles: true,
+                cancelable: true
+            });
+            document.body.dispatchEvent(tabEvent);
+        """)
+        
+        # 2. Use ActionChains for an additional click
+        actions = ActionChains(driver)
         body = driver.find_element(By.TAG_NAME, "body")
-        driver.execute_script("arguments[0].click();", body)
-        print("Clicked on body element to shift focus")
-    except NoSuchElementException:
-        print("No body element found, page might not have loaded correctly")
+        actions.move_to_element(body).click().perform()
+        
+        # 3. Send an escape key to dismiss any potential focus
+        actions.send_keys(Keys.ESCAPE).perform()
+        
+        print("Multiple focus shift attempts completed")
     except Exception as click_error:
-        print(f"Failed to click body element: {str(click_error)}")
+        print(f"Failed to shift focus: {str(click_error)}")
 
     try:
         if special_key:
