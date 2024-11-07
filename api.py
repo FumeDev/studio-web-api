@@ -251,6 +251,16 @@ def kill_chrome_processes():
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
+
+    # Check if Chrome is already running and get info
+    chrome_info = get_chrome_info(debugging_port)
+    if chrome_info["running"]:
+        return jsonify({
+            "message": f"Chrome is already running on debugging port {debugging_port}",
+            "url": chrome_info["url"],
+            "title": chrome_info["title"],
+            "old": True
+        }), 200
     
     # Kill all Chrome processes
     try:
@@ -262,16 +272,6 @@ def start_browser():
     chrome_path = data.get('chrome_path', '')
     display = data.get('display', ':1')
     user_profile = data.get('user_profile', 'Default')  # New parameter for user profile
-
-    # Check if Chrome is already running and get info
-    chrome_info = get_chrome_info(debugging_port)
-    if chrome_info["running"]:
-        return jsonify({
-            "message": f"Chrome is already running on debugging port {debugging_port}",
-            "url": chrome_info["url"],
-            "title": chrome_info["title"],
-            "old": True
-        }), 200
 
     if not chrome_path:
         common_locations = [
@@ -630,8 +630,6 @@ def type_input(driver):
                 'DOWN': Keys.DOWN,
                 'LEFT': Keys.LEFT,
                 'RIGHT': Keys.RIGHT,
-                'F1': Keys.F1,
-                # ... other special keys ...
             }
             
             key = special_keys_map.get(special_key.upper())
@@ -1256,6 +1254,73 @@ def folder_tree():
         "folder_path": folder_path,
         "output": output
     })
+    
+def can_connect_to_driver(debugging_port=9222):
+    """
+    Check if there is a Chrome instance running that we can connect to.
+    
+    Args:
+        debugging_port (int): The debugging port to check (default: 9222)
+        
+    Returns:
+        dict: A dictionary containing:
+            - connected (bool): Whether connection is possible
+            - error (str): Error message if connection failed
+            - browser_info (dict): Browser information if connection successful
+    """
+    try:
+        # First check if the debugging port is responding
+        response = requests.get(f'http://localhost:{debugging_port}/json/version', timeout=2)
+        
+        if response.status_code != 200:
+            return {
+                "connected": False,
+                "error": f"Chrome debugging port {debugging_port} responded with status {response.status_code}",
+                "browser_info": None
+            }
+            
+        # Try to create a WebDriver instance
+        chrome_options = Options()
+        chrome_options.add_experimental_option("debuggerAddress", f"localhost:{debugging_port}")
+        
+        driver = webdriver.Chrome(options=chrome_options)
+        
+        # Get browser information
+        browser_info = {
+            "url": driver.current_url,
+            "title": driver.title,
+            "ready_state": driver.execute_script("return document.readyState"),
+            "browser_version": response.json().get("Browser"),
+            "websocket_url": response.json().get("webSocketDebuggerUrl")
+        }
+        
+        # Clean up the driver
+        driver.quit()
+        
+        return {
+            "connected": True,
+            "error": None,
+            "browser_info": browser_info
+        }
+        
+    except requests.exceptions.ConnectionError:
+        return {
+            "connected": False,
+            "error": f"Could not connect to Chrome debugging port {debugging_port}",
+            "browser_info": None
+        }
+    except WebDriverException as e:
+        return {
+            "connected": False,
+            "error": f"WebDriver error: {str(e)}",
+            "browser_info": None
+        }
+    except Exception as e:
+        return {
+            "connected": False,
+            "error": f"Unexpected error: {str(e)}",
+            "browser_info": None
+        }
     
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5553, debug=True)
