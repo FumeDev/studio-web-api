@@ -672,6 +672,19 @@ def type_input(driver):
                         
                         // Trigger input event
                         el.dispatchEvent(new Event('input', { bubbles: true }));
+                        
+                        // Trigger change event to persist the value
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        
+                        // For React/Angular inputs, set the value property directly
+                        if (el._valueTracker) {
+                            el._valueTracker.setValue(currentValue);
+                        }
+                        
+                        // Set as a property as well as an attribute
+                        el.setAttribute('value', newValue);
+                        Object.getOwnPropertyDescriptor(el.__proto__, 'value')?.set?.call(el, newValue);
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
                     }
                     
                     // Create and dispatch keypress event
