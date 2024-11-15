@@ -630,16 +630,51 @@ def type_input(driver):
                 'DOWN': Keys.DOWN,
                 'LEFT': Keys.LEFT,
                 'RIGHT': Keys.RIGHT,
+                'CONTROL': Keys.CONTROL,
+                'COMMAND': Keys.COMMAND,
+                'ALT': Keys.ALT,
+                'SHIFT': Keys.SHIFT,
+                'A': 'a',
+                'C': 'c',
+                'V': 'v',
+                'X': 'x',
+                'Z': 'z',
             }
             
-            key = special_keys_map.get(special_key.upper())
-            if not key:
-                return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
+            # Split compound keys (e.g., "CONTROL A" -> ["CONTROL", "A"])
+            key_combination = special_key.upper().split()
             
-            # Use ActionChains for special keys
-            actions = ActionChains(driver)
-            actions.send_keys(key)
-            actions.perform()
+            if len(key_combination) > 1:
+                # Handle compound keys
+                actions = ActionChains(driver)
+                
+                # Press all modifier keys
+                for modifier in key_combination[:-1]:
+                    key = special_keys_map.get(modifier)
+                    if not key:
+                        return jsonify({"error": f"Unsupported modifier key: {modifier}"}), 400
+                    actions.key_down(key)
+                
+                # Press the final key
+                final_key = special_keys_map.get(key_combination[-1])
+                if not final_key:
+                    return jsonify({"error": f"Unsupported key: {key_combination[-1]}"}), 400
+                actions.send_keys(final_key)
+                
+                # Release all modifier keys in reverse order
+                for modifier in reversed(key_combination[:-1]):
+                    actions.key_up(special_keys_map[modifier])
+                
+                actions.perform()
+            else:
+                # Handle single special key
+                key = special_keys_map.get(key_combination[0])
+                if not key:
+                    return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
+                
+                actions = ActionChains(driver)
+                actions.send_keys(key)
+                actions.perform()
         else:
             # Use JavaScript to handle both focused and unfocused cases
             js_script = """
@@ -1259,7 +1294,7 @@ def folder_tree():
     folder_path = request.args.get('folder_path')
 
     # cd into /home/fume/Documents and run find {folder_path} -type f -exec ls -l {} \; | grep -v ^total
-    command = f"cd /home/fume/Documents && find {folder_path} -mindepth 1 -maxdepth 2"
+    command = f"cd /home/fume/Documents && find {folder_path} -mindepth 1 -maxdepth 3"
     output = subprocess.check_output(command, shell=True).decode('utf-8')
     
     return jsonify({
