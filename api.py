@@ -702,8 +702,15 @@ def type_input(driver):
                         const newValue = currentValue.substring(0, start) + char + currentValue.substring(end);
                         el.value = newValue;
                         
-                        // Update cursor position
-                        el.setSelectionRange(start + 1, start + 1);
+                        // Only try to set selection range for supported input types
+                        const supportsSelection = ['text', 'password', 'search', 'tel', 'url', 'textarea'].includes(el.type);
+                        if (supportsSelection && typeof el.setSelectionRange === 'function') {
+                            try {
+                                el.setSelectionRange(start + 1, start + 1);
+                            } catch (e) {
+                                console.warn('Failed to set selection range:', e);
+                            }
+                        }
                         
                         // Trigger input event
                         el.dispatchEvent(new Event('input', { bubbles: true }));
