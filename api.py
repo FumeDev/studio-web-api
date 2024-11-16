@@ -682,31 +682,29 @@ def type_input(driver):
                     const el = document.activeElement;
                     const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
                     
-                    // Get current cursor position and text
-                    const start = isInput ? (el.selectionStart || 0) : 0;
-                    const end = isInput ? (el.selectionEnd || 0) : 0;
-                    const currentValue = isInput ? (el.value || '') : '';
-                    
-                    // Create and dispatch keydown event
-                    el.dispatchEvent(new KeyboardEvent('keydown', {
-                        key: char,
-                        code: 'Key' + char.toUpperCase(),
-                        keyCode: char.charCodeAt(0),
-                        which: char.charCodeAt(0),
-                        bubbles: true,
-                        cancelable: true
-                    }));
-                    
                     if (isInput) {
-                        // Update input value at cursor position
-                        const newValue = currentValue.substring(0, start) + char + currentValue.substring(end);
+                        // Simply append the character to the end of the current value
+                        const currentValue = el.value || '';
+                        const newValue = currentValue + char;
+                        
+                        // Create and dispatch keydown event
+                        el.dispatchEvent(new KeyboardEvent('keydown', {
+                            key: char,
+                            code: 'Key' + char.toUpperCase(),
+                            keyCode: char.charCodeAt(0),
+                            which: char.charCodeAt(0),
+                            bubbles: true,
+                            cancelable: true
+                        }));
+                        
+                        // Set the new value
                         el.value = newValue;
                         
                         // Only try to set selection range for supported input types
                         const supportsSelection = ['text', 'password', 'search', 'tel', 'url', 'textarea'].includes(el.type);
                         if (supportsSelection && typeof el.setSelectionRange === 'function') {
                             try {
-                                el.setSelectionRange(start + 1, start + 1);
+                                el.setSelectionRange(newValue.length, newValue.length);
                             } catch (e) {
                                 console.warn('Failed to set selection range:', e);
                             }
@@ -726,7 +724,6 @@ def type_input(driver):
                         // Set as a property as well as an attribute
                         el.setAttribute('value', newValue);
                         Object.getOwnPropertyDescriptor(el.__proto__, 'value')?.set?.call(el, newValue);
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
                     }
                     
                     // Create and dispatch keypress event
