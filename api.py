@@ -411,6 +411,22 @@ def click_element(driver):
             if "Error" in result or "not found" in result:
                 return jsonify({"error": result}), 400
         else:
+            # Get element at coordinates before clicking
+            get_element_script = """
+            function getElementFromPoint(x, y) {
+                const element = document.elementFromPoint(x, y);
+                if (element) {
+                    return {
+                        html: element.outerHTML,
+                        id: element.id
+                    };
+                }
+                return null;
+            }
+            return getElementFromPoint(arguments[0], arguments[1]);
+            """
+            element_info = driver.execute_script(get_element_script, x_coord, y_coord)
+            
             # Coordinate-based clicking using ActionChains
             actions = ActionChains(driver)
             actions.move_by_offset(x_coord, y_coord)
@@ -428,10 +444,16 @@ def click_element(driver):
         if existing_logs:
             driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
 
-        return jsonify({
+        response_data = {
             "message": "Click action performed successfully",
             "result": result
-        }), 200
+        }
+
+        # Add element info to response if coordinate-based click was used
+        if not xpath and element_info:
+            response_data["clicked_element"] = element_info
+
+        return jsonify(response_data), 200
 
     except TimeoutException:
         return jsonify({"error": f"Element not found within {wait_time} seconds"}), 404
