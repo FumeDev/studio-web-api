@@ -450,7 +450,9 @@ def click_element(driver):
         }
 
         # Add element info to response if coordinate-based click was used
-        if not xpath and element_info:
+        if xpath:
+            response_data["xpath"] = xpath
+        elif element_info:
             response_data["clicked_element"] = element_info
 
         return jsonify(response_data), 200
@@ -785,6 +787,16 @@ def type_input(driver):
 
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+    
+
+@app.route('/inspect_element', methods=['POST'])
+@handle_alerts
+def inspect_element(driver):
+    data = request.json
+    x = data.get('x')
+    y = data.get('y')
+    html_content = driver.execute_script(f"return document.elementFromPoint({x}, {y}).outerHTML;")
+    return jsonify({"html_content": html_content}), 200
         
 @app.route('/scroll_page', methods=['POST'])
 @handle_alerts
