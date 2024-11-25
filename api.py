@@ -253,14 +253,14 @@ def start_browser():
     debugging_port = data.get('debugging_port', 9222)
 
     # Check if Chrome is already running and get info
-    chrome_info = get_chrome_info(debugging_port)
-    if chrome_info["running"]:
-        return jsonify({
-            "message": f"Chrome is already running on debugging port {debugging_port}",
-            "url": chrome_info["url"],
-            "title": chrome_info["title"],
-            "old": True
-        }), 200
+    # chrome_info = get_chrome_info(debugging_port)
+    # if chrome_info["running"]:
+    #     return jsonify({
+    #         "message": f"Chrome is already running on debugging port {debugging_port}",
+    #         "url": chrome_info["url"],
+    #         "title": chrome_info["title"],
+    #         "old": True
+    #     }), 200
     
     # Kill all Chrome processes
     try:
