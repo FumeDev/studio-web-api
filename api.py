@@ -1340,6 +1340,84 @@ def folder_tree():
         "folder_path": folder_path,
         "output": output
     })
+
+@app.route('/find-repo', methods=['POST'])
+def find_repo():
+    data = request.json
+    remote_url = data.get('remote_url')
+    
+    if not remote_url:
+        return jsonify({"error": "Remote URL not provided"}), 400
+    
+    try:
+        # Start from /home/fume/Documents
+        base_path = '/home/fume/Documents'
+        
+        # Function to get immediate subdirectories
+        def get_subdirs(path):
+            try:
+                return [entry.path for entry in os.scandir(path) 
+                       if entry.is_dir() and not entry.name.startswith('.')]
+            except PermissionError:
+                return []
+
+        # Function to check if a directory is the target repo
+        def is_target_repo(path):
+            git_config_path = os.path.join(path, '.git', 'config')
+            if os.path.exists(git_config_path):
+                try:
+                    with open(git_config_path, 'r') as f:
+                        config_content = f.read()
+                    return remote_url in config_content
+                except Exception as e:
+                    print(f"Error reading git config at {git_config_path}: {str(e)}")
+            return False
+
+        # BFS implementation with layer tracking
+        visited = set()
+        current_layer = [base_path]
+        depth = 0
+        max_depth = 3  # Maximum depth to search
+        
+        while current_layer and depth < max_depth:
+            print(f"Searching depth {depth}...")
+            next_layer = []
+            
+            # Process current layer
+            for current_path in current_layer:
+                if current_path in visited:
+                    continue
+                    
+                visited.add(current_path)
+                
+                # Check if this is the target repo
+                if is_target_repo(current_path):
+                    rel_path = os.path.relpath(current_path, base_path)
+                    return jsonify({
+                        "message": "Repository found",
+                        "path": rel_path,
+                        "depth": depth
+                    }), 200
+                
+                # Add subdirectories to next layer
+                next_layer.extend(get_subdirs(current_path))
+            
+            # Move to next layer
+            current_layer = next_layer
+            depth += 1
+        
+        return jsonify({
+            "message": "Repository not found",
+            "path": None,
+            "max_depth_reached": depth >= max_depth
+        }), 404
+
+    except Exception as e:
+        return jsonify({
+            "error": f"Unexpected error: {str(e)}",
+            "traceback": traceback.format_exc()
+        }), 500
+    
     
 def can_connect_to_driver(debugging_port=9222):
     """
