@@ -1392,10 +1392,10 @@ def find_repo():
                 
                 # Check if this is the target repo
                 if is_target_repo(current_path):
-                    rel_path = os.path.relpath(current_path, base_path)
+                    abs_path = os.path.abspath(current_path)
                     return jsonify({
                         "message": "Repository found",
-                        "path": rel_path,
+                        "path": abs_path,
                         "depth": depth
                     }), 200
                 
