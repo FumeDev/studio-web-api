@@ -21,6 +21,9 @@ import psutil
 import requests
 import pyautogui
 
+# Add this near the top of the file, after the imports but before any other code
+if not os.getenv('DISPLAY'):
+    os.environ['DISPLAY'] = ':1'
 
 # Add these global variables after the imports
 BUNNY_API_KEY = os.getenv('BUNNY_API_KEY')
