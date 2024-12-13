@@ -1,7 +1,9 @@
+import os
+
 # Add this near the top of the file, after the imports but before any other code
 if not os.getenv('DISPLAY'):
     os.environ['DISPLAY'] = ':1'
-    
+
 from functools import wraps
 import json
 from flask import Flask, Response, request, jsonify
@@ -15,7 +17,6 @@ from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, ElementNotInteractableException, NoAlertPresentException
 import re
 import time
-import os
 import subprocess
 import requests
 import traceback
