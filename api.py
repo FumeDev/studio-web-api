@@ -391,85 +391,68 @@ def click_element(driver):
         return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
 
     try:
-        # Before click, get any existing logs
-        existing_logs = driver.execute_script("return window._consoleLogs || [];")
+        # Configure PyAutoGUI settings
+        pyautogui.PAUSE = 0.1
+        pyautogui.FAILSAFE = True
 
         if xpath:
             # XPath-based clicking logic
-            WebDriverWait(driver, wait_time).until(
+            element = WebDriverWait(driver, wait_time).until(
                 EC.presence_of_element_located((By.XPATH, xpath))
             )
             
-            force_click_script = """
-            function getElementByXpath(xpath) {
-                const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                return result.singleNodeValue;
-            }
-            function forceClickElement(element) {
-                if (element) {
-                    try {
-                        element.scrollIntoView({block: 'center', inline: 'center'});
-                        const clickEvent = new MouseEvent('click', {
-                            view: window,
-                            bubbles: true,
-                            cancelable: true
-                        });
-                        element.dispatchEvent(clickEvent);
-                        return "Click event dispatched to the element";
-                    } catch (error) {
-                        return "Error clicking the element: " + error.toString();
-                    }
-                } else {
-                    return "Element not found";
-                }
-            }
-            const element = getElementByXpath(arguments[0]);
-            return forceClickElement(element);
-            """
-            result = driver.execute_script(force_click_script, xpath)
+            # Get element's location and browser window position
+            element_location = element.location
+            window_rect = driver.get_window_rect()
             
-            if "Error" in result or "not found" in result:
-                return jsonify({"error": result}), 400
+            # Calculate the browser's content offset
+            content_offset = get_browser_content_offset(driver)
+            
+            # Calculate absolute screen coordinates for the element
+            abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
+            abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
+            
+            # Move mouse and click
+            pyautogui.moveTo(abs_x, abs_y)
+            pyautogui.click()
+            
+            result = "Click performed at element location"
+            
         else:
-            # Get element at coordinates before clicking
-            get_element_script = """
-            function getElementFromPoint(x, y) {
-                const element = document.elementFromPoint(x, y);
-                if (element) {
-                    return {
-                        html: element.outerHTML,
-                        id: element.id
-                    };
-                }
-                return null;
-            }
-            return getElementFromPoint(arguments[0], arguments[1]);
-            """
-            element_info = driver.execute_script(get_element_script, x_coord, y_coord)
+            # Coordinate-based clicking
+            window_rect = driver.get_window_rect()
+            content_offset = get_browser_content_offset(driver)
             
-            # Coordinate-based clicking using ActionChains
-            actions = ActionChains(driver)
-            actions.move_by_offset(x_coord, y_coord)
-            actions.click()
-            actions.perform()
+            # Calculate absolute screen coordinates
+            abs_x = window_rect['x'] + content_offset['left'] + x_coord
+            abs_y = window_rect['y'] + content_offset['top'] + y_coord
+            
+            # Get element at coordinates before clicking
+            element_info = driver.execute_script("""
+                function getElementFromPoint(x, y) {
+                    const element = document.elementFromPoint(x, y);
+                    if (element) {
+                        return {
+                            html: element.outerHTML,
+                            id: element.id
+                        };
+                    }
+                    return null;
+                }
+                return getElementFromPoint(arguments[0], arguments[1]);
+            """, x_coord, y_coord)
+            
+            # Move mouse and click
+            pyautogui.moveTo(abs_x, abs_y)
+            pyautogui.click()
+            
             result = "Click performed at coordinates"
-
-        # Add a small delay to allow for any navigation to start
-        time.sleep(0.5)
-
-        # Reinject logging script
-        driver.execute_script(get_console_logging_script())
-
-        # Restore previous logs
-        if existing_logs:
-            driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
 
         response_data = {
             "message": "Click action performed successfully",
             "result": result
         }
 
-        # Add element info to response if coordinate-based click was used
         if xpath:
             response_data["xpath"] = xpath
         elif element_info:
@@ -483,7 +466,20 @@ def click_element(driver):
         return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
-    
+
+def get_browser_content_offset(driver):
+    """
+    Calculate the offset of the browser's content area from the window edge.
+    This accounts for things like the address bar, bookmarks bar, etc.
+    """
+    return driver.execute_script("""
+        return {
+            top: window.outerHeight - window.innerHeight + 
+                 (window.screenY || window.screenTop || 0),
+            left: (window.screenX || window.screenLeft || 0)
+        };
+    """)
+
 @app.route('/double_click_element', methods=['POST'])
 @handle_alerts
 def double_click_element(driver):
