@@ -18,7 +18,27 @@ import traceback
 
 from bs4 import BeautifulSoup
 import psutil
+from datetime import datetime
+import requests
+from threading import Thread
+import queue
+import base64
+from PIL import Image
+import io
+import uuid
+from dotenv import load_dotenv
+import threading
+import pyautogui
 
+# Load environment variables
+load_dotenv()
+
+# Add these global variables after the imports
+BUNNY_API_KEY = os.getenv('BUNNY_API_KEY')
+BUNNY_STORAGE_ZONE = os.getenv('BUNNY_STORAGE_ZONE')
+BUNNY_STORAGE_URL = f'https://{os.getenv("BUNNY_REGION")}.storage.bunnycdn.com'
+RECORDING_PROCESS = None
+RECORDING_START_TIME = None
 
 def get_console_logging_script():
     return """
@@ -632,153 +652,55 @@ def type_input(driver):
     data = request.json
     input_text = data.get('text')
     special_key = data.get('special_key')
+    delay = data.get('delay', 0.1)  # Add configurable delay between keystrokes
 
     if not input_text and not special_key:
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
+        # Configure PyAutoGUI settings
+        pyautogui.PAUSE = delay  # Set the delay between actions
+        pyautogui.FAILSAFE = True  # Enable fail-safe feature
+
         if special_key:
-            # Map special keys to Selenium Keys
+            # Map special keys to PyAutoGUI keys
             special_keys_map = {
-                'DELETE': Keys.DELETE,
-                'BACKSPACE': Keys.BACK_SPACE,
-                'TAB': Keys.TAB,
-                'RETURN': Keys.RETURN,
-                'ENTER': Keys.ENTER,
-                'PAGE_UP': Keys.PAGE_UP,
-                'PAGE_DOWN': Keys.PAGE_DOWN,
-                'HOME': Keys.HOME,
-                'END': Keys.END,
-                'ESCAPE': Keys.ESCAPE,
-                'UP': Keys.UP,
-                'DOWN': Keys.DOWN,
-                'LEFT': Keys.LEFT,
-                'RIGHT': Keys.RIGHT,
-                'CONTROL': Keys.CONTROL,
-                'COMMAND': Keys.COMMAND,
-                'ALT': Keys.ALT,
-                'SHIFT': Keys.SHIFT,
-                'A': 'a',
-                'C': 'c',
-                'V': 'v',
-                'X': 'x',
-                'Z': 'z',
+                'DELETE': 'delete',
+                'BACKSPACE': 'backspace',
+                'TAB': 'tab',
+                'RETURN': 'return',
+                'ENTER': 'enter',
+                'PAGE_UP': 'pageup',
+                'PAGE_DOWN': 'pagedown',
+                'HOME': 'home',
+                'END': 'end',
+                'ESCAPE': 'esc',
+                'UP': 'up',
+                'DOWN': 'down',
+                'LEFT': 'left',
+                'RIGHT': 'right',
+                'CONTROL': 'ctrl',
+                'COMMAND': 'command',
+                'ALT': 'alt',
+                'SHIFT': 'shift',
             }
             
             # Split compound keys (e.g., "CONTROL A" -> ["CONTROL", "A"])
             key_combination = special_key.upper().split()
             
             if len(key_combination) > 1:
-                # Handle compound keys
-                actions = ActionChains(driver)
-                
-                # Press all modifier keys
-                for modifier in key_combination[:-1]:
-                    key = special_keys_map.get(modifier)
-                    if not key:
-                        return jsonify({"error": f"Unsupported modifier key: {modifier}"}), 400
-                    actions.key_down(key)
-                
-                # Press the final key
-                final_key = special_keys_map.get(key_combination[-1])
-                if not final_key:
-                    return jsonify({"error": f"Unsupported key: {key_combination[-1]}"}), 400
-                actions.send_keys(final_key)
-                
-                # Release all modifier keys in reverse order
-                for modifier in reversed(key_combination[:-1]):
-                    actions.key_up(special_keys_map[modifier])
-                
-                actions.perform()
+                # Handle key combinations (e.g., Ctrl+A, Ctrl+C)
+                keys = [special_keys_map.get(k, k.lower()) for k in key_combination]
+                pyautogui.hotkey(*keys)
             else:
                 # Handle single special key
                 key = special_keys_map.get(key_combination[0])
                 if not key:
                     return jsonify({"error": f"Unsupported special key: {special_key}"}), 400
-                
-                actions = ActionChains(driver)
-                actions.send_keys(key)
-                actions.perform()
+                pyautogui.press(key)
         else:
-            # Use JavaScript to handle both focused and unfocused cases
-            js_script = """
-                function simulateKeyboardInput(char) {
-                    const el = document.activeElement;
-                    const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
-                    
-                    if (isInput) {
-                        // Simply append the character to the end of the current value
-                        const currentValue = el.value || '';
-                        const newValue = currentValue + char;
-                        
-                        // Create and dispatch keydown event
-                        el.dispatchEvent(new KeyboardEvent('keydown', {
-                            key: char,
-                            code: 'Key' + char.toUpperCase(),
-                            keyCode: char.charCodeAt(0),
-                            which: char.charCodeAt(0),
-                            bubbles: true,
-                            cancelable: true
-                        }));
-                        
-                        // Set the new value
-                        el.value = newValue;
-                        
-                        // Only try to set selection range for supported input types
-                        const supportsSelection = ['text', 'password', 'search', 'tel', 'url', 'textarea'].includes(el.type);
-                        if (supportsSelection && typeof el.setSelectionRange === 'function') {
-                            try {
-                                el.setSelectionRange(newValue.length, newValue.length);
-                            } catch (e) {
-                                console.warn('Failed to set selection range:', e);
-                            }
-                        }
-                        
-                        // Trigger input event
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                        
-                        // Trigger change event to persist the value
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                        
-                        // For React/Angular inputs, set the value property directly
-                        if (el._valueTracker) {
-                            el._valueTracker.setValue(currentValue);
-                        }
-                        
-                        // Set as a property as well as an attribute
-                        el.setAttribute('value', newValue);
-                        Object.getOwnPropertyDescriptor(el.__proto__, 'value')?.set?.call(el, newValue);
-                    }
-                    
-                    // Create and dispatch keypress event
-                    el.dispatchEvent(new KeyboardEvent('keypress', {
-                        key: char,
-                        code: 'Key' + char.toUpperCase(),
-                        keyCode: char.charCodeAt(0),
-                        which: char.charCodeAt(0),
-                        bubbles: true,
-                        cancelable: true
-                    }));
-                    
-                    // Create and dispatch keyup event
-                    el.dispatchEvent(new KeyboardEvent('keyup', {
-                        key: char,
-                        code: 'Key' + char.toUpperCase(),
-                        keyCode: char.charCodeAt(0),
-                        which: char.charCodeAt(0),
-                        bubbles: true,
-                        cancelable: true
-                    }));
-                    
-                    return true;
-                }
-                return simulateKeyboardInput(arguments[0]);
-            """
-            
-            # Type each character individually
-            for char in input_text:
-                driver.execute_script(js_script, char)
-                time.sleep(0.05)  # Small delay between characters
+            # Type the regular text
+            pyautogui.write(input_text)
 
         return jsonify({
             "message": "Keys sent successfully",
@@ -1485,6 +1407,6 @@ def can_connect_to_driver(debugging_port=9222):
             "error": f"Unexpected error: {str(e)}",
             "browser_info": None
         }
-    
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5553, debug=True)
