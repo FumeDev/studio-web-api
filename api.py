@@ -8,7 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, ElementClickInterceptedException, ElementNotInteractableException, InvalidElementStateException, StaleElementReferenceException, NoAlertPresentException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException, ElementNotInteractableException, NoAlertPresentException
 import re
 import time
 import os
@@ -18,20 +18,9 @@ import traceback
 
 from bs4 import BeautifulSoup
 import psutil
-from datetime import datetime
 import requests
-from threading import Thread
-import queue
-import base64
-from PIL import Image
-import io
-import uuid
-from dotenv import load_dotenv
-import threading
 import pyautogui
 
-# Load environment variables
-load_dotenv()
 
 # Add these global variables after the imports
 BUNNY_API_KEY = os.getenv('BUNNY_API_KEY')
