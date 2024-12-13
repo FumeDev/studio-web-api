@@ -418,8 +418,8 @@ def click_element(driver):
             content_offset = get_browser_content_offset(driver)
             
             # Calculate absolute screen coordinates
-            abs_x = window_rect['x'] + content_offset['left'] + x_coord
-            abs_y = window_rect['y'] + content_offset['top'] + y_coord
+            abs_x = window_rect['x'] + x_coord
+            abs_y = window_rect['y'] + y_coord
             
             # Get element at coordinates before clicking
             element_info = driver.execute_script("""
