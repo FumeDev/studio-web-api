@@ -413,37 +413,22 @@ def click_element(driver):
             result = "Click performed at element location"
             
         else:
-            # Get window position and size information
+            # Coordinate-based clicking
             window_rect = driver.get_window_rect()
+            content_offset = get_browser_content_offset(driver)
             
-            # Get the browser's viewport offset
-            viewport_offset = driver.execute_script("""
-                return {
-                    top: window.outerHeight - window.innerHeight,
-                    left: window.outerWidth - window.innerWidth,
-                    scrollX: window.scrollX || window.pageXOffset,
-                    scrollY: window.scrollY || window.pageYOffset
-                };
-            """)
+            # Calculate absolute screen coordinates
+            abs_x = window_rect['x'] + content_offset['left'] + x_coord
+            abs_y = window_rect['y'] + content_offset['top'] + y_coord
             
-            # Calculate absolute screen coordinates accounting for viewport offset
-            abs_x = window_rect['x'] + x_coord
-            abs_y = window_rect['y'] + y_coord + viewport_offset['top']
-            
-            # Get element at coordinates before clicking (for debugging)
+            # Get element at coordinates before clicking
             element_info = driver.execute_script("""
                 function getElementFromPoint(x, y) {
                     const element = document.elementFromPoint(x, y);
                     if (element) {
                         return {
                             html: element.outerHTML,
-                            id: element.id,
-                            tagName: element.tagName,
-                            className: element.className,
-                            offset: {
-                                top: element.getBoundingClientRect().top,
-                                left: element.getBoundingClientRect().left
-                            }
+                            id: element.id
                         };
                     }
                     return null;
@@ -455,16 +440,19 @@ def click_element(driver):
             pyautogui.moveTo(abs_x, abs_y)
             pyautogui.click()
             
-            result = {
-                "message": "Click performed at coordinates",
-                "intended_coordinates": {"x": x_coord, "y": y_coord},
-                "actual_coordinates": {"x": abs_x, "y": abs_y},
-                "viewport_offset": viewport_offset,
-                "window_info": window_rect,
-                "clicked_element": element_info
-            }
+            result = "Click performed at coordinates"
 
-        return jsonify(result), 200
+        response_data = {
+            "message": "Click action performed successfully",
+            "result": result
+        }
+
+        if xpath:
+            response_data["xpath"] = xpath
+        elif element_info:
+            response_data["clicked_element"] = element_info
+
+        return jsonify(response_data), 200
 
     except TimeoutException:
         return jsonify({"error": f"Element not found within {wait_time} seconds"}), 404
