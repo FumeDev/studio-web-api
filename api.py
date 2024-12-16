@@ -312,18 +312,20 @@ def start_browser():
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
-            '--disable-gpu',  # Disable GPU hardware acceleration
-            '--disable-dev-shm-usage',  # Overcome limited resource problems
-            '--disable-software-rasterizer',  # Disable software rasterizer
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-software-rasterizer',
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-infobars',
-            '--disable-features=InterestFeedContentSuggestions',
-            '--disable-default-apps',
-            f'--profile-directory={user_profile}'  # Add the user profile option
+            '--disable-features=TranslateUI,InterestFeedContentSuggestions',
+            '--disable-notifications',
+            '--disable-extensions',
+            '--disable-session-crashed-bubble',
+            f'--user-data-dir=/path/to/custom_user_data_dir',
+            f'--profile-directory={user_profile}'
         ]
 
-        # If running as root, add these options
         if os.geteuid() == 0:
             chrome_command.extend([
                 '--disable-setuid-sandbox',
