@@ -295,85 +295,78 @@ def start_browser():
     try:
         os.environ['DISPLAY'] = display
 
-        # Enhanced Chrome flags for automation
+        # Enhanced Chrome flags for automation with aggressive popup blocking
         chrome_command = [
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
+            
+            # Core settings for cookie persistence
+            f'--user-data-dir=chrome-data/{user_profile}',  # Persistent user data
+            '--persist-user-preferences',
+            f'--profile-directory={user_profile}',
+            
+            # Aggressive popup and notification blocking
+            '--disable-notifications',
+            '--disable-popup-blocking',
+            '--disable-infobars',
+            '--disable-translate',
+            '--disable-sync',  # Prevents sync popups while keeping cookies
+            '--no-default-browser-check',
+            '--no-first-run',
+            
+            # Disable all update-related popups
+            '--disable-component-update',
+            '--simulate-outdated',
+            '--disable-features=UpdateNotifications',
+            
+            # Disable session restore popups
+            '--disable-session-crashed-bubble',
+            '--no-restore-session-state',
+            '--disable-features=RestoreLastSessionOnStartup',
+            
+            # Disable all promotional content
+            '--disable-features=ChromePromoDialog,ChromeWhatsNewUI',
+            '--disable-features=ExtensionsToolbarMenu',
+            
+            # Disable various automatic popups
+            '--disable-features=AutofillSaveCardBubbleV2',
+            '--disable-features=AutofillCreditCardAuthentication',
+            '--disable-features=PasswordRevamp',
+            '--disable-features=InterestFeedContentSuggestions',
+            
+            # Performance and stability settings
             '--disable-gpu',
             '--disable-dev-shm-usage',
             '--disable-software-rasterizer',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-infobars',
-            '--disable-features=InterestFeedContentSuggestions',
-            '--disable-default-apps',
-            f'--profile-directory={user_profile}',
-            
-            # Disable various popups and notifications
-            '--disable-notifications',
-            '--disable-popup-blocking',
-            '--disable-prompt-on-repost',
-            '--disable-sync-preferences',
-            '--disable-translate',
-            '--disable-background-mode',
-            '--disable-component-update',
+            '--disable-background-timer-throttling',
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
-            '--disable-client-side-phishing-detection',
-            
-            # Specifically target update and restore popups
-            '--simulate-outdated',  # Prevents update checks
-            '--disable-features=ChromeWhatsNewUI,TranslateUI,GlobalMediaControls,MediaRouter,DialMediaRouteProvider',
-            '--disable-session-crashed-bubble',  # Prevents restore pages popup
-            '--disable-infobars',  # Reinforced disable of infobars
-            '--disable-features=UpdateNotifications',  # Disable update notifications
-            '--disable-features=RestoreLastSessionOnStartup',  # Prevent restore session popup
-            '--disable-features=ChromePromoDialog',  # Disable promotional dialogs
-            '--disable-features=AutofillSaveCardBubbleV2',  # Disable card save popup
-            '--disable-features=AutofillCreditCardAuthentication',
-            
-            # Automation-specific settings
-            '--enable-automation',
-            '--ignore-certificate-errors',
-            '--allow-running-insecure-content',
-            '--disable-web-security',
-            '--disable-blink-features=AutomationControlled',
-            
-            # Performance optimizations
-            '--disable-extensions',
             '--disable-background-networking',
-            '--disable-background-timer-throttling',
-            '--disable-ipc-flooding-protection',
-            '--disable-hang-monitor',
+            
+            # Automation-related settings
+            '--enable-automation',
             '--no-sandbox',
+            '--disable-blink-features=AutomationControlled',
+            '--ignore-certificate-errors',
             
-            # Additional settings to prevent popups and restore
+            # Additional popup prevention
             '--disable-save-password-bubble',
-            '--disable-features=PasswordRevamp',
-            '--no-crash-upload',
-            '--disable-crash-reporter',
-            '--disable-breakpad',  # Disable crash reporting
-            '--no-report-upload',
-            '--disable-logging',
-            '--disable-zero-browsers-open-for-tests',  # Prevents first-run / welcome stuff
-            '--disable-features=ExtensionsToolbarMenu',  # Disable extensions toolbar popup
-            '--disable-features=SendUpdatesForSystemApps',  # Prevent system app updates
-            
-            # Persist user data while avoiding sync/restore prompts
-            '--persist-user-preferences',
-            '--no-restore-session-state',
-            '--no-managed-user-acknowledgment-check',
-            '--silent-debugger-extension-api',  # Prevents debugger attachment notifications
-            '--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync',  # Prevents certain prompts when closing
+            '--disable-client-side-phishing-detection',
+            '--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync',
+            '--silent-debugger-extension-api',
         ]
 
-        # If running as root, add these options
+        # If running as root, add sandbox disabling
         if os.geteuid() == 0:
             chrome_command.extend([
                 '--disable-setuid-sandbox',
                 '--disable-seccomp-filter-sandbox'
             ])
+
+        # Create user data directory if it doesn't exist
+        user_data_dir = f'chrome-data/{user_profile}'
+        os.makedirs(user_data_dir, exist_ok=True)
 
         subprocess.Popen(chrome_command, env=os.environ)
 
