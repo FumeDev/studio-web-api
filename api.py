@@ -321,11 +321,17 @@ def start_browser():
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
             '--disable-client-side-phishing-detection',
-            '--disable-features=TranslateUI',
-            '--disable-features=GlobalMediaControls',
-            '--disable-features=MediaRouter',
-            '--disable-features=DialMediaRouteProvider',
-            '--disable-features=ChromeWhatsNewUI',
+            
+            # Specifically target update and restore popups
+            '--simulate-outdated',  # Prevents update checks
+            '--disable-features=ChromeWhatsNewUI,TranslateUI,GlobalMediaControls,MediaRouter,DialMediaRouteProvider',
+            '--disable-session-crashed-bubble',  # Prevents restore pages popup
+            '--disable-infobars',  # Reinforced disable of infobars
+            '--disable-features=UpdateNotifications',  # Disable update notifications
+            '--disable-features=RestoreLastSessionOnStartup',  # Prevent restore session popup
+            '--disable-features=ChromePromoDialog',  # Disable promotional dialogs
+            '--disable-features=AutofillSaveCardBubbleV2',  # Disable card save popup
+            '--disable-features=AutofillCreditCardAuthentication',
             
             # Automation-specific settings
             '--enable-automation',
@@ -342,10 +348,24 @@ def start_browser():
             '--disable-hang-monitor',
             '--no-sandbox',
             
+            # Additional settings to prevent popups and restore
+            '--disable-save-password-bubble',
+            '--disable-features=PasswordRevamp',
+            '--no-crash-upload',
+            '--disable-crash-reporter',
+            '--disable-breakpad',  # Disable crash reporting
+            '--no-report-upload',
+            '--disable-logging',
+            '--disable-zero-browsers-open-for-tests',  # Prevents first-run / welcome stuff
+            '--disable-features=ExtensionsToolbarMenu',  # Disable extensions toolbar popup
+            '--disable-features=SendUpdatesForSystemApps',  # Prevent system app updates
+            
             # Persist user data while avoiding sync/restore prompts
             '--persist-user-preferences',
             '--no-restore-session-state',
             '--no-managed-user-acknowledgment-check',
+            '--silent-debugger-extension-api',  # Prevents debugger attachment notifications
+            '--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync',  # Prevents certain prompts when closing
         ]
 
         # If running as root, add these options
