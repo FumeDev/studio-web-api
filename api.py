@@ -266,17 +266,6 @@ def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
 
-    # Check if Chrome is already running and get info
-    # chrome_info = get_chrome_info(debugging_port)
-    # if chrome_info["running"]:
-    #     return jsonify({
-    #         "message": f"Chrome is already running on debugging port {debugging_port}",
-    #         "url": chrome_info["url"],
-    #         "title": chrome_info["title"],
-    #         "old": True
-    #     }), 200
-    
-    # Kill all Chrome processes
     try:
         kill_chrome_processes()
         time.sleep(1)  # Wait for processes to terminate
@@ -285,7 +274,7 @@ def start_browser():
 
     chrome_path = data.get('chrome_path', '')
     display = data.get('display', ':1')
-    user_profile = data.get('user_profile', 'Default')  # New parameter for user profile
+    user_profile = data.get('user_profile', 'Default')
 
     if not chrome_path:
         common_locations = [
@@ -304,10 +293,9 @@ def start_browser():
         return jsonify({"error": "Chrome executable not found. Please provide the path."}), 400
 
     try:
-        # Set the DISPLAY environment variable
         os.environ['DISPLAY'] = display
 
-        # Start Chrome with remote debugging, maximized window, and specified user profile
+        # Enhanced Chrome flags for automation
         chrome_command = [
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
@@ -318,14 +306,49 @@ def start_browser():
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-infobars',
-            '--disable-features=TranslateUI,InterestFeedContentSuggestions',
+            '--disable-features=InterestFeedContentSuggestions',
+            '--disable-default-apps',
+            f'--profile-directory={user_profile}',
+            
+            # Disable various popups and notifications
             '--disable-notifications',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-sync-preferences',
+            '--disable-translate',
+            '--disable-background-mode',
+            '--disable-component-update',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-client-side-phishing-detection',
+            '--disable-features=TranslateUI',
+            '--disable-features=GlobalMediaControls',
+            '--disable-features=MediaRouter',
+            '--disable-features=DialMediaRouteProvider',
+            '--disable-features=ChromeWhatsNewUI',
+            
+            # Automation-specific settings
+            '--enable-automation',
+            '--ignore-certificate-errors',
+            '--allow-running-insecure-content',
+            '--disable-web-security',
+            '--disable-blink-features=AutomationControlled',
+            
+            # Performance optimizations
             '--disable-extensions',
-            '--disable-session-crashed-bubble',
-            f'--user-data-dir=/path/to/custom_user_data_dir',
-            f'--profile-directory={user_profile}'
+            '--disable-background-networking',
+            '--disable-background-timer-throttling',
+            '--disable-ipc-flooding-protection',
+            '--disable-hang-monitor',
+            '--no-sandbox',
+            
+            # Persist user data while avoiding sync/restore prompts
+            '--persist-user-preferences',
+            '--no-restore-session-state',
+            '--no-managed-user-acknowledgment-check',
         ]
 
+        # If running as root, add these options
         if os.geteuid() == 0:
             chrome_command.extend([
                 '--disable-setuid-sandbox',
