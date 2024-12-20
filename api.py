@@ -268,10 +268,17 @@ def focus_browser_window(driver):
         # Get window position and size
         window_rect = driver.get_window_rect()
         
+        # Store the initial window position
+        driver.execute_script("""
+            window._initialPosition = {
+                x: window.screenX || window.screenLeft || 0,
+                y: window.screenY || window.screenTop || 0
+            };
+        """)
+        
         # Calculate position to click (middle of title bar)
-        # Title bar is usually at the top of the window, about 15-20 pixels from the top
-        click_x = window_rect['x'] + (window_rect['width'] // 2)  # Middle of window
-        click_y = window_rect['y'] + 10  # Near top of window
+        click_x = window_rect['x'] + (window_rect['width'] // 2)
+        click_y = window_rect['y'] + 10
         
         # Configure PyAutoGUI
         pyautogui.PAUSE = 0.1
@@ -280,6 +287,9 @@ def focus_browser_window(driver):
         # Move to position and click
         pyautogui.moveTo(click_x, click_y)
         pyautogui.click()
+        
+        # Ensure window stays in position
+        driver.set_window_rect(x=window_rect['x'], y=window_rect['y'])
         
         # Small delay to ensure focus is set
         time.sleep(0.1)
@@ -460,79 +470,63 @@ def click_element(driver):
         pyautogui.PAUSE = 0.1
         pyautogui.FAILSAFE = True
 
+        # Get current window position
+        window_rect = driver.get_window_rect()
+        
+        # Ensure window hasn't moved from its initial position
+        driver.set_window_rect(x=window_rect['x'], y=window_rect['y'])
+
         if xpath:
             # XPath-based clicking logic
             element = WebDriverWait(driver, wait_time).until(
                 EC.presence_of_element_located((By.XPATH, xpath))
             )
             
-            # Get element's location and browser window position
-            element_location = element.location
-            window_rect = driver.get_window_rect()
-            
-            # Calculate the browser's content offset
-            content_offset = get_browser_content_offset(driver)
+            # Get element's location and size
+            element_rect = element.rect
             
             # Calculate absolute screen coordinates for the element
-            abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
-            abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
+            abs_x = window_rect['x'] + element_rect['x']
+            abs_y = window_rect['y'] + element_rect['y']
+            
+            # Add offset for Chrome's header
+            header_height = driver.execute_script("""
+                return window.outerHeight - window.innerHeight;
+            """)
+            
+            abs_y += header_height
             
             # Move mouse and click
             pyautogui.moveTo(abs_x, abs_y)
             pyautogui.click()
+            
+            # Ensure window stays in position after click
+            driver.set_window_rect(x=window_rect['x'], y=window_rect['y'])
             
             result = "Click performed at element location"
             
         else:
-            # Get window position and size information
-            window_rect = driver.get_window_rect()
+            # Coordinate-based clicking
+            abs_x = window_rect['x'] + x_coord
+            abs_y = window_rect['y'] + y_coord
             
-            # Get the browser's viewport offset
-            viewport_offset = driver.execute_script("""
-                return {
-                    top: window.outerHeight - window.innerHeight,
-                    left: window.outerWidth - window.innerWidth,
-                    scrollX: window.scrollX || window.pageXOffset,
-                    scrollY: window.scrollY || window.pageYOffset
-                };
+            # Add header height for coordinate clicks
+            header_height = driver.execute_script("""
+                return window.outerHeight - window.innerHeight;
             """)
             
-            # Calculate absolute screen coordinates accounting for viewport offset
-            abs_x = window_rect['x'] + x_coord
-            abs_y = window_rect['y'] + y_coord + viewport_offset['top']
-            
-            # Get element at coordinates before clicking (for debugging)
-            element_info = driver.execute_script("""
-                function getElementFromPoint(x, y) {
-                    const element = document.elementFromPoint(x, y);
-                    if (element) {
-                        return {
-                            html: element.outerHTML,
-                            id: element.id,
-                            tagName: element.tagName,
-                            className: element.className,
-                            offset: {
-                                top: element.getBoundingClientRect().top,
-                                left: element.getBoundingClientRect().left
-                            }
-                        };
-                    }
-                    return null;
-                }
-                return getElementFromPoint(arguments[0], arguments[1]);
-            """, x_coord, y_coord)
+            abs_y += header_height
             
             # Move mouse and click
             pyautogui.moveTo(abs_x, abs_y)
             pyautogui.click()
             
+            # Ensure window stays in position after click
+            driver.set_window_rect(x=window_rect['x'], y=window_rect['y'])
+            
             result = {
                 "message": "Click performed at coordinates",
-                "intended_coordinates": {"x": x_coord, "y": y_coord},
-                "actual_coordinates": {"x": abs_x, "y": abs_y},
-                "viewport_offset": viewport_offset,
-                "window_info": window_rect,
-                "clicked_element": element_info
+                "coordinates": {"x": abs_x, "y": abs_y}
             }
 
         return jsonify(result), 200
