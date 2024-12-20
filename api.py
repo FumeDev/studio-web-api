@@ -637,10 +637,6 @@ def go_to_url(driver):
     if not url:
         return jsonify({"error": "URL not provided"}), 400
 
-    # Handle missing protocol
-    if not re.match(r'^\w+://', url):
-        url = f'https://{url}'
-
     try:
         print(f"Attempting to navigate to: {url}")
         
@@ -654,6 +650,22 @@ def go_to_url(driver):
         WebDriverWait(driver, timeout).until(
             lambda d: d.execute_script('return document.readyState') == 'complete'
         )
+        
+        # Get window position and size
+        window_rect = driver.get_window_rect()
+        
+        # Calculate position to click (top center of the window)
+        # We'll click 10 pixels down from the top of the window to hit the title bar
+        click_x = window_rect['x'] + (window_rect['width'] // 2)
+        click_y = window_rect['y'] + 10  # 10 pixels down from the top
+        
+        # Configure PyAutoGUI settings
+        pyautogui.PAUSE = 0.1
+        pyautogui.FAILSAFE = True
+        
+        # Move to and click the title bar
+        pyautogui.moveTo(click_x, click_y)
+        pyautogui.click()
         
         # Reinject logging script
         driver.execute_script(get_console_logging_script())
@@ -671,16 +683,18 @@ def go_to_url(driver):
         js_errors = driver.execute_script("return window.JSErrors || []")
         if js_errors:
             print("JavaScript errors encountered:", js_errors)
-        
-        # Reinject the console logging script
-        driver.execute_script(get_console_logging_script())
 
         return jsonify({
             "message": "Navigation attempt completed",
             "current_url": current_url,
             "page_title": page_title,
             "fully_loaded": driver.execute_script('return document.readyState') == 'complete',
-            "js_errors": js_errors
+            "js_errors": js_errors,
+            "window_info": {
+                "position": {"x": window_rect['x'], "y": window_rect['y']},
+                "size": {"width": window_rect['width'], "height": window_rect['height']},
+                "clicked_at": {"x": click_x, "y": click_y}
+            }
         }), 200
 
     except WebDriverException as e:
