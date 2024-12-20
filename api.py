@@ -1,4 +1,5 @@
 import os
+import platform
 
 # Add this near the top of the file, after the imports but before any other code
 if not os.getenv('DISPLAY'):
@@ -261,39 +262,6 @@ def kill_chrome_processes():
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
 
-# Add this helper function near the top of the file after imports
-def focus_browser_window(driver):
-    """Focus the browser window by clicking on its title bar"""
-    try:
-        # Get window state
-        is_maximized = driver.execute_script("""
-            return window.outerWidth >= window.screen.availWidth && 
-                   window.outerHeight >= window.screen.availHeight;
-        """)
-        
-        # Get window position and size
-        window_rect = driver.get_window_rect()
-        
-        # Calculate position to click (middle of title bar)
-        click_x = window_rect['x'] + (window_rect['width'] // 2)
-        click_y = window_rect['y'] + 10
-        
-        # Configure PyAutoGUI
-        pyautogui.PAUSE = 0.1
-        pyautogui.FAILSAFE = True
-        
-        # Move to position and click
-        pyautogui.moveTo(click_x, click_y)
-        pyautogui.click()
-        
-        # Small delay to ensure focus is set
-        time.sleep(0.1)
-        
-        return True
-    except Exception as e:
-        print(f"Warning: Failed to focus browser window: {str(e)}")
-        return False
-
 @app.route('/start_browser', methods=['POST'])
 def start_browser():
     data = request.json
@@ -333,7 +301,6 @@ def start_browser():
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
-            '--window-size=1920,1080',
             
             # Core settings for cookie persistence
             f'--user-data-dir=chrome-data/{user_profile}',  # Persistent user data
@@ -404,20 +371,24 @@ def start_browser():
 
         subprocess.Popen(chrome_command, env=os.environ)
 
-        # Wait a bit longer for Chrome to fully start
-        time.sleep(3)  # Increased from 2 to 3 seconds
+        # Bring the Chrome window into focus (Linux-only approach)
+        if platform.system() == 'Linux':
+            try:
+                time.sleep(1)  # Wait briefly for the window to appear
+                window_id = subprocess.check_output(["xdotool", "search", "--sync", "--onlyvisible", "--class", "chrome"]).decode().strip().split('\n')[0]
+                subprocess.check_call(["xdotool", "windowactivate", window_id])
+            except Exception as e:
+                print(f"Warning: Could not focus Chrome window: {str(e)}")
+
+        # Wait for Chrome to start
+        time.sleep(2)
         
-        # Connect to Chrome and focus the window
+        # Connect to Chrome and inject the console logging script
         try:
             driver = connect_to_chrome(debugging_port)
-            
-            # Focus the browser window
-            focus_browser_window(driver)
-            
-            # Inject the console logging script
             driver.execute_script(get_console_logging_script())
         except Exception as e:
-            print(f"Warning: Failed to perform post-launch setup: {str(e)}")
+            print(f"Warning: Failed to inject console logging script: {str(e)}")
 
         # Get Chrome info and return response
         chrome_info = get_chrome_info(debugging_port)
@@ -466,47 +437,22 @@ def click_element(driver):
         pyautogui.PAUSE = 0.1
         pyautogui.FAILSAFE = True
 
-        # Check if window is maximized
-        is_maximized = driver.execute_script("""
-            return window.outerWidth >= window.screen.availWidth && 
-                   window.outerHeight >= window.screen.availHeight;
-        """)
-
-        # Get window position and header height
-        window_rect = driver.get_window_rect()
-        header_height = driver.execute_script("return window.outerHeight - window.innerHeight;")
-
         if xpath:
             # XPath-based clicking logic
             element = WebDriverWait(driver, wait_time).until(
                 EC.presence_of_element_located((By.XPATH, xpath))
             )
             
-            # Get element's location and size
-            element_rect = element.rect
+            # Get element's location and browser window position
+            element_location = element.location
+            window_rect = driver.get_window_rect()
+            
+            # Calculate the browser's content offset
+            content_offset = get_browser_content_offset(driver)
             
             # Calculate absolute screen coordinates for the element
-            if is_maximized:
-                # For maximized windows, use screen coordinates
-                abs_x = element_rect['x']
-                abs_y = element_rect['y'] + header_height
-            else:
-                # For normal windows, add window position
-                abs_x = window_rect['x'] + element_rect['x']
-                abs_y = window_rect['y'] + element_rect['y'] + header_height
-            
-            # Scroll element into view if needed
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-            time.sleep(0.1)  # Allow scroll to complete
-            
-            # Recalculate coordinates after scroll
-            updated_rect = element.rect
-            if is_maximized:
-                abs_x = updated_rect['x']
-                abs_y = updated_rect['y'] + header_height
-            else:
-                abs_x = window_rect['x'] + updated_rect['x']
-                abs_y = window_rect['y'] + updated_rect['y'] + header_height
+            abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
+            abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
             
             # Move mouse and click
             pyautogui.moveTo(abs_x, abs_y)
@@ -515,13 +461,43 @@ def click_element(driver):
             result = "Click performed at element location"
             
         else:
-            # Coordinate-based clicking
-            if is_maximized:
-                abs_x = x_coord
-                abs_y = y_coord + header_height
-            else:
-                abs_x = window_rect['x'] + x_coord
-                abs_y = window_rect['y'] + y_coord + header_height
+            # Get window position and size information
+            window_rect = driver.get_window_rect()
+            
+            # Get the browser's viewport offset
+            viewport_offset = driver.execute_script("""
+                return {
+                    top: window.outerHeight - window.innerHeight,
+                    left: window.outerWidth - window.innerWidth,
+                    scrollX: window.scrollX || window.pageXOffset,
+                    scrollY: window.scrollY || window.pageYOffset
+                };
+            """)
+            
+            # Calculate absolute screen coordinates accounting for viewport offset
+            abs_x = window_rect['x'] + x_coord
+            abs_y = window_rect['y'] + y_coord + viewport_offset['top']
+            
+            # Get element at coordinates before clicking (for debugging)
+            element_info = driver.execute_script("""
+                function getElementFromPoint(x, y) {
+                    const element = document.elementFromPoint(x, y);
+                    if (element) {
+                        return {
+                            html: element.outerHTML,
+                            id: element.id,
+                            tagName: element.tagName,
+                            className: element.className,
+                            offset: {
+                                top: element.getBoundingClientRect().top,
+                                left: element.getBoundingClientRect().left
+                            }
+                        };
+                    }
+                    return null;
+                }
+                return getElementFromPoint(arguments[0], arguments[1]);
+            """, x_coord, y_coord)
             
             # Move mouse and click
             pyautogui.moveTo(abs_x, abs_y)
@@ -529,7 +505,11 @@ def click_element(driver):
             
             result = {
                 "message": "Click performed at coordinates",
-                "coordinates": {"x": abs_x, "y": abs_y}
+                "intended_coordinates": {"x": x_coord, "y": y_coord},
+                "actual_coordinates": {"x": abs_x, "y": abs_y},
+                "viewport_offset": viewport_offset,
+                "window_info": window_rect,
+                "clicked_element": element_info
             }
 
         return jsonify(result), 200
