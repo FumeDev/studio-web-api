@@ -261,6 +261,34 @@ def kill_chrome_processes():
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
 
+# Add this helper function near the top of the file after imports
+def focus_browser_window(driver):
+    """Focus the browser window by clicking on its title bar"""
+    try:
+        # Get window position and size
+        window_rect = driver.get_window_rect()
+        
+        # Calculate position to click (middle of title bar)
+        # Title bar is usually at the top of the window, about 15-20 pixels from the top
+        click_x = window_rect['x'] + (window_rect['width'] // 2)  # Middle of window
+        click_y = window_rect['y'] + 10  # Near top of window
+        
+        # Configure PyAutoGUI
+        pyautogui.PAUSE = 0.1
+        pyautogui.FAILSAFE = True
+        
+        # Move to position and click
+        pyautogui.moveTo(click_x, click_y)
+        pyautogui.click()
+        
+        # Small delay to ensure focus is set
+        time.sleep(0.1)
+        
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to focus browser window: {str(e)}")
+        return False
+
 @app.route('/start_browser', methods=['POST'])
 def start_browser():
     data = request.json
@@ -370,15 +398,20 @@ def start_browser():
 
         subprocess.Popen(chrome_command, env=os.environ)
 
-        # Wait for Chrome to start
-        time.sleep(2)
+        # Wait a bit longer for Chrome to fully start
+        time.sleep(3)  # Increased from 2 to 3 seconds
         
-        # Connect to Chrome and inject the console logging script
+        # Connect to Chrome and focus the window
         try:
             driver = connect_to_chrome(debugging_port)
+            
+            # Focus the browser window
+            focus_browser_window(driver)
+            
+            # Inject the console logging script
             driver.execute_script(get_console_logging_script())
         except Exception as e:
-            print(f"Warning: Failed to inject console logging script: {str(e)}")
+            print(f"Warning: Failed to perform post-launch setup: {str(e)}")
 
         # Get Chrome info and return response
         chrome_info = get_chrome_info(debugging_port)
@@ -637,19 +670,15 @@ def go_to_url(driver):
     if not url:
         return jsonify({"error": "URL not provided"}), 400
 
+    # Handle missing protocol
+    if not re.match(r'^\w+://', url):
+        url = f'https://{url}'
+
     try:
         print(f"Attempting to navigate to: {url}")
         
         # Before navigation, get any existing logs
         existing_logs = driver.execute_script("return window._consoleLogs || [];")
-        
-        # Maximize and position the window properly
-        driver.maximize_window()
-        time.sleep(0.5)  # Give the window time to maximize
-        
-        # Set window position to top of screen
-        driver.set_window_rect(x=0, y=0)
-        time.sleep(0.5)  # Give the window time to reposition
         
         # Perform navigation
         driver.get(url)
@@ -658,23 +687,6 @@ def go_to_url(driver):
         WebDriverWait(driver, timeout).until(
             lambda d: d.execute_script('return document.readyState') == 'complete'
         )
-        
-        # Get window position and size after everything is stable
-        window_rect = driver.get_window_rect()
-        
-        # Calculate position to click (top center of the window)
-        # Increase the Y offset to ensure we hit the title bar
-        click_x = window_rect['x'] + (window_rect['width'] // 2)
-        click_y = window_rect['y'] + 25  # Increased from 10 to 25 pixels to better hit the title bar
-        
-        # Configure PyAutoGUI settings
-        pyautogui.PAUSE = 0.5  # Increased pause to give more time between actions
-        pyautogui.FAILSAFE = True
-        
-        # Move to and click the title bar more deliberately
-        pyautogui.moveTo(click_x, click_y, duration=0.2)  # Add duration for smoother movement
-        pyautogui.click()
-        time.sleep(0.2)  # Small pause after click
         
         # Reinject logging script
         driver.execute_script(get_console_logging_script())
@@ -692,18 +704,16 @@ def go_to_url(driver):
         js_errors = driver.execute_script("return window.JSErrors || []")
         if js_errors:
             print("JavaScript errors encountered:", js_errors)
+        
+        # Reinject the console logging script
+        driver.execute_script(get_console_logging_script())
 
         return jsonify({
             "message": "Navigation attempt completed",
             "current_url": current_url,
             "page_title": page_title,
             "fully_loaded": driver.execute_script('return document.readyState') == 'complete',
-            "js_errors": js_errors,
-            "window_info": {
-                "position": {"x": window_rect['x'], "y": window_rect['y']},
-                "size": {"width": window_rect['width'], "height": window_rect['height']},
-                "clicked_at": {"x": click_x, "y": click_y}
-            }
+            "js_errors": js_errors
         }), 200
 
     except WebDriverException as e:
