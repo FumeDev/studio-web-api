@@ -437,15 +437,31 @@ def click_element(driver):
         pyautogui.PAUSE = 0.1
         pyautogui.FAILSAFE = True
 
+        # Focus the Chrome window first
+        window_rect = driver.get_window_rect()
+        try:
+            if platform.system() == 'Linux':
+                window_id = subprocess.check_output(["xdotool", "search", "--sync", "--onlyvisible", "--class", "chrome"]).decode().strip().split('\n')[0]
+                subprocess.check_call(["xdotool", "windowactivate", window_id])
+            pyautogui.moveTo(window_rect['x'] + 100, window_rect['y'] + 100)  # Move to a safe spot in the window
+            pyautogui.click()  # Click to ensure window focus
+            time.sleep(0.2)  # Small delay after focusing
+        except Exception as e:
+            print(f"Warning: Could not focus window: {str(e)}")
+
         if xpath:
             # XPath-based clicking logic
             element = WebDriverWait(driver, wait_time).until(
                 EC.presence_of_element_located((By.XPATH, xpath))
             )
             
+            # Wait for element to be clickable
+            element = WebDriverWait(driver, wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, xpath))
+            )
+            
             # Get element's location and browser window position
             element_location = element.location
-            window_rect = driver.get_window_rect()
             
             # Calculate the browser's content offset
             content_offset = get_browser_content_offset(driver)
@@ -454,17 +470,30 @@ def click_element(driver):
             abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
             abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
             
-            # Move mouse and click
-            pyautogui.moveTo(abs_x, abs_y)
-            pyautogui.click()
+            # Move mouse and perform click with retry
+            max_attempts = 2
+            for attempt in range(max_attempts):
+                pyautogui.moveTo(abs_x, abs_y)
+                time.sleep(0.1)  # Small delay before clicking
+                pyautogui.click()
+                
+                # Verify if element was actually clicked (for input elements)
+                if element.tag_name.lower() == 'input':
+                    try:
+                        element.is_selected()  # This will force a check of element state
+                        break  # If no StaleElementReferenceException, click was successful
+                    except:
+                        if attempt == max_attempts - 1:
+                            raise
+                        time.sleep(0.2)  # Wait before retry
+                else:
+                    break
             
             result = "Click performed at element location"
             
         else:
+            # Coordinate-based clicking logic
             # Get window position and size information
-            window_rect = driver.get_window_rect()
-            
-            # Get the browser's viewport offset
             viewport_offset = driver.execute_script("""
                 return {
                     top: window.outerHeight - window.innerHeight,
@@ -499,9 +528,15 @@ def click_element(driver):
                 return getElementFromPoint(arguments[0], arguments[1]);
             """, x_coord, y_coord)
             
-            # Move mouse and click
-            pyautogui.moveTo(abs_x, abs_y)
-            pyautogui.click()
+            # Move mouse and perform click with retry
+            max_attempts = 2
+            for attempt in range(max_attempts):
+                pyautogui.moveTo(abs_x, abs_y)
+                time.sleep(0.1)  # Small delay before clicking
+                pyautogui.click()
+                
+                if attempt < max_attempts - 1:
+                    time.sleep(0.2)  # Wait before potential retry
             
             result = {
                 "message": "Click performed at coordinates",
