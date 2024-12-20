@@ -643,6 +643,14 @@ def go_to_url(driver):
         # Before navigation, get any existing logs
         existing_logs = driver.execute_script("return window._consoleLogs || [];")
         
+        # Maximize and position the window properly
+        driver.maximize_window()
+        time.sleep(0.5)  # Give the window time to maximize
+        
+        # Set window position to top of screen
+        driver.set_window_rect(x=0, y=0)
+        time.sleep(0.5)  # Give the window time to reposition
+        
         # Perform navigation
         driver.get(url)
         
@@ -651,21 +659,22 @@ def go_to_url(driver):
             lambda d: d.execute_script('return document.readyState') == 'complete'
         )
         
-        # Get window position and size
+        # Get window position and size after everything is stable
         window_rect = driver.get_window_rect()
         
         # Calculate position to click (top center of the window)
-        # We'll click 10 pixels down from the top of the window to hit the title bar
+        # Increase the Y offset to ensure we hit the title bar
         click_x = window_rect['x'] + (window_rect['width'] // 2)
-        click_y = window_rect['y'] + 10  # 10 pixels down from the top
+        click_y = window_rect['y'] + 25  # Increased from 10 to 25 pixels to better hit the title bar
         
         # Configure PyAutoGUI settings
-        pyautogui.PAUSE = 0.1
+        pyautogui.PAUSE = 0.5  # Increased pause to give more time between actions
         pyautogui.FAILSAFE = True
         
-        # Move to and click the title bar
-        pyautogui.moveTo(click_x, click_y)
+        # Move to and click the title bar more deliberately
+        pyautogui.moveTo(click_x, click_y, duration=0.2)  # Add duration for smoother movement
         pyautogui.click()
+        time.sleep(0.2)  # Small pause after click
         
         # Reinject logging script
         driver.execute_script(get_console_logging_script())
