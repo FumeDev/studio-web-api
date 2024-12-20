@@ -511,6 +511,108 @@ def click_element(driver):
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
+@app.route('/double_click_element', methods=['POST'])
+@handle_alerts
+def double_click_element(driver):
+    data = request.json
+    xpath = data.get('xpath')
+    x_coord = data.get('x')
+    y_coord = data.get('y')
+    debugging_port = data.get('debugging_port', 9222)
+    wait_time = data.get('wait_time', 10)
+
+    if not xpath and (x_coord is None or y_coord is None):
+        return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
+
+    try:
+        # Configure PyAutoGUI settings
+        pyautogui.PAUSE = 0.1
+        pyautogui.FAILSAFE = True
+
+        if xpath:
+            # XPath-based double clicking logic
+            element = WebDriverWait(driver, wait_time).until(
+                EC.presence_of_element_located((By.XPATH, xpath))
+            )
+            
+            # Get element's location and browser window position
+            element_location = element.location
+            window_rect = driver.get_window_rect()
+            
+            # Calculate the browser's content offset
+            content_offset = get_browser_content_offset(driver)
+            
+            # Calculate absolute screen coordinates for the element
+            abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
+            abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
+            
+            # Move mouse and double click
+            pyautogui.moveTo(abs_x, abs_y)
+            pyautogui.doubleClick()
+            
+            result = "Double click performed at element location"
+            
+        else:
+            # Get window position and size information
+            window_rect = driver.get_window_rect()
+            
+            # Get the browser's viewport offset
+            viewport_offset = driver.execute_script("""
+                return {
+                    top: window.outerHeight - window.innerHeight,
+                    left: window.outerWidth - window.innerWidth,
+                    scrollX: window.scrollX || window.pageXOffset,
+                    scrollY: window.scrollY || window.pageYOffset
+                };
+            """)
+            
+            # Calculate absolute screen coordinates accounting for viewport offset
+            abs_x = window_rect['x'] + x_coord
+            abs_y = window_rect['y'] + y_coord + viewport_offset['top']
+            
+            # Get element at coordinates before clicking (for debugging)
+            element_info = driver.execute_script("""
+                function getElementFromPoint(x, y) {
+                    const element = document.elementFromPoint(x, y);
+                    if (element) {
+                        return {
+                            html: element.outerHTML,
+                            id: element.id,
+                            tagName: element.tagName,
+                            className: element.className,
+                            offset: {
+                                top: element.getBoundingClientRect().top,
+                                left: element.getBoundingClientRect().left
+                            }
+                        };
+                    }
+                    return null;
+                }
+                return getElementFromPoint(arguments[0], arguments[1]);
+            """, x_coord, y_coord)
+            
+            # Move mouse and double click
+            pyautogui.moveTo(abs_x, abs_y)
+            pyautogui.doubleClick()
+            
+            result = {
+                "message": "Double click performed at coordinates",
+                "intended_coordinates": {"x": x_coord, "y": y_coord},
+                "actual_coordinates": {"x": abs_x, "y": abs_y},
+                "viewport_offset": viewport_offset,
+                "window_info": window_rect,
+                "clicked_element": element_info
+            }
+
+        return jsonify(result), 200
+
+    except TimeoutException:
+        return jsonify({"error": f"Element not found within {wait_time} seconds"}), 404
+    except WebDriverException as e:
+        return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
 def get_browser_content_offset(driver):
     """
     Calculate the offset of the browser's content area from the window edge.
@@ -523,78 +625,6 @@ def get_browser_content_offset(driver):
             left: (window.screenX || window.screenLeft || 0)
         };
     """)
-
-@app.route('/double_click_element', methods=['POST'])
-@handle_alerts
-def double_click_element(driver):
-    data = request.json
-    xpath = data.get('xpath')
-    debugging_port = data.get('debugging_port', 9222)
-    wait_time = data.get('wait_time', 10)
-
-    if not xpath:
-        return jsonify({"error": "XPath must be provided"}), 400
-
-    try:
-        # Wait for the element to be present in the DOM
-        WebDriverWait(driver, wait_time).until(
-            EC.presence_of_element_located((By.XPATH, xpath))
-        )
-
-        # JavaScript to forcefully double-click the element
-        force_double_click_script = """
-        function getElementByXpath(xpath) {
-            const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            return result.singleNodeValue;
-        }
-
-        function forceDoubleClickElement(element) {
-            if (element) {
-                try {
-                    // Scroll the element into view
-                    element.scrollIntoView({block: 'center', inline: 'center'});
-                    
-                    // Create a new mouse event for double-click
-                    const dblclickEvent = new MouseEvent('dblclick', {
-                        view: window,
-                        bubbles: true,
-                        cancelable: true
-                    });
-                    
-                    // Dispatch the event to the element
-                    element.dispatchEvent(dblclickEvent);
-                    
-                    return "Double-click event dispatched to the element";
-                } catch (error) {
-                    return "Error double-clicking the element: " + error.toString();
-                }
-            } else {
-                return "Element not found";
-            }
-        }
-
-        const element = getElementByXpath(arguments[0]);
-        return forceDoubleClickElement(element);
-        """
-
-        # Execute the JavaScript to double-click the element
-        result = driver.execute_script(force_double_click_script, xpath)
-
-        if "Error" in result or "not found" in result:
-            return jsonify({"error": result}), 400
-
-        return jsonify({
-            "message": "Element double-clicked successfully",
-            "xpath": xpath,
-            "result": result
-        }), 200
-
-    except TimeoutException:
-        return jsonify({"error": f"Element not found within {wait_time} seconds"}), 404
-    except WebDriverException as e:
-        return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
-    except Exception as e:
-        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
     
 @app.route('/go_to_url', methods=['POST'])
 @handle_alerts
