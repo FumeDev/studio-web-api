@@ -21,7 +21,6 @@ huggingface-hub==0.24.6
 idna==3.8
 jmespath==1.0.1
 kiwisolver==1.4.7
-matplotlib==3.9.2
 multidict==6.0.5
 multiprocess==0.70.16
 numpy==2.1.0
