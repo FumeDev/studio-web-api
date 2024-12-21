@@ -296,16 +296,25 @@ def start_browser():
     try:
         os.environ['DISPLAY'] = display
 
-        # Enhanced Chrome flags for automation with aggressive popup blocking
+        # Add these new Chrome arguments to remove automation flags
         chrome_command = [
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
             
             # Core settings for cookie persistence
-            f'--user-data-dir=chrome-data/{user_profile}',  # Persistent user data
+            f'--user-data-dir=chrome-data/{user_profile}',
             '--persist-user-preferences',
             f'--profile-directory={user_profile}',
+            
+            # Aggressive session restore disabling
+            '--disable-session-crashed-bubble',
+            '--no-restore-session-state',
+            '--disable-features=RestoreLastSessionOnStartup,SessionRestore,TabHoverCards,PageInfoV2Cards',
+            '--disable-session-service',
+            '--disable-crash-reporter',
+            '--disable-features=MediaRouter',
+            '--restore-last-session=false',
             
             # Aggressive popup and notification blocking
             '--disable-notifications',
@@ -321,15 +330,6 @@ def start_browser():
             '--simulate-outdated',
             '--disable-features=UpdateNotifications',
             
-            # Disable session restore popups
-            '--disable-session-crashed-bubble',
-            '--no-restore-session-state',
-            '--disable-features=RestoreLastSessionOnStartup',
-            
-            # Disable all promotional content
-            '--disable-features=ChromePromoDialog,ChromeWhatsNewUI',
-            '--disable-features=ExtensionsToolbarMenu',
-            
             # Disable various automatic popups
             '--disable-features=AutofillSaveCardBubbleV2',
             '--disable-features=AutofillCreditCardAuthentication',
@@ -344,12 +344,6 @@ def start_browser():
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
             '--disable-background-networking',
-            
-            # Automation-related settings
-            '--enable-automation',
-            '--no-sandbox',
-            '--disable-blink-features=AutomationControlled',
-            '--ignore-certificate-errors',
             
             # Additional popup prevention
             '--disable-save-password-bubble',
@@ -369,26 +363,135 @@ def start_browser():
         user_data_dir = f'chrome-data/{user_profile}'
         os.makedirs(user_data_dir, exist_ok=True)
 
-        subprocess.Popen(chrome_command, env=os.environ)
+        # Enhanced script with more aggressive tooltip removal
+        remove_automation_flags_script = """
+        // Remove webdriver flag
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
 
-        # Bring the Chrome window into focus (Linux-only approach)
-        if platform.system() == 'Linux':
-            try:
-                time.sleep(1)  # Wait briefly for the window to appear
-                window_id = subprocess.check_output(["xdotool", "search", "--sync", "--onlyvisible", "--class", "chrome"]).decode().strip().split('\n')[0]
-                subprocess.check_call(["xdotool", "windowactivate", window_id])
-            except Exception as e:
-                print(f"Warning: Could not focus Chrome window: {str(e)}")
+        // Remove automation flags from Chrome
+        window.chrome = {
+            runtime: {},
+            loadTimes: function(){},
+            csi: function(){},
+            app: {},
+        };
+
+        // Remove automation-specific CSS
+        let automationStyle = document.querySelector('link[rel="stylesheet"][href*="automation"]');
+        if (automationStyle) {
+            automationStyle.remove();
+        }
+
+        // Function to remove unwanted elements
+        function removeUnwantedElements() {
+            // Remove automation banner
+            const banners = document.getElementsByClassName('infobar');
+            for (const banner of banners) {
+                if (banner.textContent.includes('automated')) {
+                    banner.remove();
+                }
+            }
+            
+            // More aggressive tooltip/button removal
+            const selectors = [
+                '[role="button"]',
+                '[role="tooltip"]',
+                '.restore-button',
+                '.restore-tab-button',
+                '.restore-pages-button',
+                '.session-restore',
+                '.tooltip',
+                '#restore-button',
+                '[title*="Restore"]',
+                '[aria-label*="Restore"]',
+                '[data-tooltip*="Restore"]'
+            ];
+            
+            selectors.forEach(selector => {
+                document.querySelectorAll(selector).forEach(element => {
+                    if (element.textContent?.includes('Restore') || 
+                        element.getAttribute('title')?.includes('Restore') ||
+                        element.getAttribute('aria-label')?.includes('Restore')) {
+                        element.remove();
+                    }
+                });
+            });
+
+            // Remove any Chrome UI elements that might contain tooltips
+            const chromeUIElements = document.querySelectorAll('*');
+            chromeUIElements.forEach(element => {
+                if (element.shadowRoot) {
+                    const shadowElements = element.shadowRoot.querySelectorAll('*');
+                    shadowElements.forEach(shadowElement => {
+                        if (shadowElement.textContent?.includes('Restore')) {
+                            shadowElement.remove();
+                        }
+                    });
+                }
+            });
+        }
+        
+        // Initial removal
+        removeUnwantedElements();
+        
+        // Monitor and remove any dynamically added elements
+        const observer = new MutationObserver((mutations) => {
+            removeUnwantedElements();
+        });
+        
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['role', 'title', 'aria-label', 'data-tooltip']
+        });
+
+        // Also try to prevent the session restore functionality
+        try {
+            chrome.sessions.restore = undefined;
+            chrome.sessions = undefined;
+        } catch(e) {}
+        """
+
+        # Create a preferences file to disable session restore
+        prefs_file = os.path.join(user_data_dir, 'Default', 'Preferences')
+        os.makedirs(os.path.dirname(prefs_file), exist_ok=True)
+        
+        prefs = {
+            "profile": {
+                "exit_type": "Normal",
+                "exited_cleanly": True
+            },
+            "session": {
+                "restore_on_startup": 5,
+                "startup_urls": []
+            },
+            "browser": {
+                "custom_chrome_frame": False,
+                "has_seen_welcome_page": True,
+                "show_home_button": False,
+                "should_restore_session": False,
+                "enable_session_restore": False
+            }
+        }
+        
+        with open(prefs_file, 'w') as f:
+            json.dump(prefs, f)
+
+        subprocess.Popen(chrome_command, env=os.environ)
 
         # Wait for Chrome to start
         time.sleep(2)
         
-        # Connect to Chrome and inject the console logging script
+        # Connect to Chrome and inject the scripts
         try:
             driver = connect_to_chrome(debugging_port)
+            driver.execute_script(remove_automation_flags_script)
             driver.execute_script(get_console_logging_script())
         except Exception as e:
-            print(f"Warning: Failed to inject console logging script: {str(e)}")
+            print(f"Warning: Failed to inject scripts: {str(e)}")
 
         # Get Chrome info and return response
         chrome_info = get_chrome_info(debugging_port)
