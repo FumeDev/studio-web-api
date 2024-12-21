@@ -799,7 +799,8 @@ def go_to_url(driver):
     data = request.json
     url = data.get('url')
     debugging_port = data.get('debugging_port', 9222)
-    timeout = data.get('timeout', 50)
+    timeout = data.get('timeout', 50)  # Default timeout of 50 seconds
+    page_load_timeout = data.get('page_load_timeout', 30)  # Default page load timeout of 30 seconds
 
     if not url:
         return jsonify({"error": "URL not provided"}), 400
@@ -811,16 +812,31 @@ def go_to_url(driver):
     try:
         print(f"Attempting to navigate to: {url}")
         
+        # Set page load timeout
+        driver.set_page_load_timeout(page_load_timeout)
+        
         # Before navigation, get any existing logs
         existing_logs = driver.execute_script("return window._consoleLogs || [];")
         
-        # Perform navigation
-        driver.get(url)
+        # Start a timer for the overall operation
+        start_time = time.time()
         
-        # Wait for page load
-        WebDriverWait(driver, timeout).until(
-            lambda d: d.execute_script('return document.readyState') == 'complete'
-        )
+        try:
+            # Perform navigation with timeout
+            driver.get(url)
+            
+            # Wait for page load with timeout
+            WebDriverWait(driver, timeout).until(
+                lambda d: d.execute_script('return document.readyState') == 'complete'
+            )
+        except TimeoutException:
+            elapsed_time = time.time() - start_time
+            return jsonify({
+                "error": f"Navigation timed out after {elapsed_time:.1f} seconds",
+                "partial_url": driver.current_url,
+                "partial_title": driver.title,
+                "status": "timeout"
+            }), 504
         
         # Reinject logging script
         driver.execute_script(get_console_logging_script())
@@ -843,11 +859,12 @@ def go_to_url(driver):
         driver.execute_script(get_console_logging_script())
 
         return jsonify({
-            "message": "Navigation attempt completed",
+            "message": "Navigation completed successfully",
             "current_url": current_url,
             "page_title": page_title,
             "fully_loaded": driver.execute_script('return document.readyState') == 'complete',
-            "js_errors": js_errors
+            "js_errors": js_errors,
+            "elapsed_time": time.time() - start_time
         }), 200
 
     except WebDriverException as e:
@@ -870,7 +887,8 @@ def go_to_url(driver):
             "stack_trace": stack_trace,
             "current_url": current_url,
             "page_source": page_source,
-            "screenshot": screenshot
+            "screenshot": screenshot,
+            "status": "error"
         }), 500
 
     except Exception as e:
@@ -880,7 +898,8 @@ def go_to_url(driver):
         print(f"Stack trace: {stack_trace}")
         return jsonify({
             "error": f"Unexpected error: {error_msg}",
-            "stack_trace": stack_trace
+            "stack_trace": stack_trace,
+            "status": "error"
         }), 500
     
 @app.route('/type_input', methods=['POST'])
