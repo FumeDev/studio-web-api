@@ -799,8 +799,8 @@ def go_to_url(driver):
     data = request.json
     url = data.get('url')
     debugging_port = data.get('debugging_port', 9222)
-    timeout = data.get('timeout', 50)  # Default timeout of 50 seconds
-    page_load_timeout = data.get('page_load_timeout', 30)  # Default page load timeout of 30 seconds
+    timeout = data.get('timeout', 300)  # Default timeout of 50 seconds
+    page_load_timeout = data.get('page_load_timeout', 300)  # Default page load timeout of 30 seconds
 
     if not url:
         return jsonify({"error": "URL not provided"}), 400
