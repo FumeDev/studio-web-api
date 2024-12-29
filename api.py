@@ -296,11 +296,11 @@ def start_browser():
     try:
         os.environ['DISPLAY'] = display
 
-        # Add these new Chrome arguments to remove automation flags
         chrome_command = [
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
+            '--force-device-scale-factor=1.25',
             
             # Core settings for cookie persistence
             f'--user-data-dir=chrome-data/{user_profile}',
@@ -909,6 +909,7 @@ def type_input(driver):
     input_text = data.get('text')
     special_key = data.get('special_key')
     delay = data.get('delay', 0.1)  # Add configurable delay between keystrokes
+    clear_first = data.get('clear_first', True)  # New parameter, defaults to True
 
     if not input_text and not special_key:
         return jsonify({"error": "Either input text or special key must be provided"}), 400
@@ -917,6 +918,16 @@ def type_input(driver):
         # Configure PyAutoGUI settings
         pyautogui.PAUSE = delay  # Set the delay between actions
         pyautogui.FAILSAFE = True  # Enable fail-safe feature
+
+        # Clear the input field first if requested
+        if clear_first:
+            # Select all text (Ctrl+A) and delete it
+            if platform.system() == 'Darwin':  # macOS
+                pyautogui.hotkey('command', 'a')
+            else:  # Windows/Linux
+                pyautogui.hotkey('ctrl', 'a')
+            pyautogui.press('delete')
+            time.sleep(delay)  # Wait a bit after clearing
 
         if special_key:
             # Map special keys to PyAutoGUI keys
@@ -960,7 +971,8 @@ def type_input(driver):
 
         return jsonify({
             "message": "Keys sent successfully",
-            "text": input_text if input_text else special_key
+            "text": input_text if input_text else special_key,
+            "cleared_first": clear_first
         }), 200
 
     except Exception as e:
