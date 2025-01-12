@@ -588,15 +588,17 @@ def click_element(driver):
                     EC.element_to_be_clickable((By.XPATH, xpath))
                 )
                 
-                element_location = element.location
+                # Get element's position relative to viewport
+                element_rect = element.rect  # This gets both position and size
                 content_offset = get_browser_content_offset(driver)
                 
-                abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
-                abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
+                # Calculate center point of the element
+                center_x = element_rect['x'] + (element_rect['width'] / 2)
+                center_y = element_rect['y'] + (element_rect['height'] / 2)
                 
-                # Ensure coordinates are integers
-                abs_x = int(abs_x)
-                abs_y = int(abs_y)
+                # Calculate absolute screen coordinates
+                abs_x = int(window_rect['x'] + content_offset['left'] + center_x)
+                abs_y = int(window_rect['y'] + content_offset['top'] + center_y)
                 
                 # Move mouse and perform click with retry
                 pyautogui.moveTo(abs_x, abs_y, duration=0.2)
@@ -620,16 +622,17 @@ def click_element(driver):
                 # Coordinate-based clicking logic
                 viewport_offset = driver.execute_script("""
                     return {
-                        top: window.outerHeight - window.innerHeight,
-                        left: window.outerWidth - window.innerWidth,
+                        top: window.outerHeight - window.innerHeight + 
+                             (window.screenY || window.screenTop || 0),
+                        left: (window.screenX || window.screenLeft || 0),
                         scrollX: window.scrollX || window.pageXOffset,
                         scrollY: window.scrollY || window.pageYOffset
                     };
                 """)
                 
-                # Ensure coordinates are integers
+                # Calculate absolute screen coordinates accounting for all offsets
                 abs_x = int(window_rect['x'] + x_coord)
-                abs_y = int(window_rect['y'] + y_coord + viewport_offset['top'])
+                abs_y = int(window_rect['y'] + viewport_offset['top'] + y_coord)
                 
                 # Get element info before clicking
                 element_info = driver.execute_script("""
