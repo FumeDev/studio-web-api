@@ -572,8 +572,6 @@ def click_element(driver):
                 if platform.system() == 'Linux':
                     window_id = subprocess.check_output(["xdotool", "search", "--sync", "--onlyvisible", "--class", "chrome"]).decode().strip().split('\n')[0]
                     subprocess.check_call(["xdotool", "windowactivate", window_id])
-                pyautogui.moveTo(window_rect['x'] + 100, window_rect['y'] + 100)
-                pyautogui.click()
                 time.sleep(0.2)
             except Exception as e:
                 print(f"Warning: Could not focus window: {str(e)}")
