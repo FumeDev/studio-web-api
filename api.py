@@ -262,6 +262,47 @@ def kill_chrome_processes():
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
 
+def clear_chrome_session(user_profile):
+    """Clear Chrome session data without deleting the entire profile"""
+    profile_dir = f'chrome-data/{user_profile}/Default'
+    
+    # Files that store session/state data
+    session_files = [
+        'Current Session',
+        'Current Tabs',
+        'Last Session',
+        'Last Tabs',
+        'Sessions',
+        'Visited Links',
+        'History',
+        'Login Data',
+        'Network Action Predictor',
+        'Network Persistent State'
+    ]
+    
+    try:
+        # Remove session files
+        for file in session_files:
+            file_path = os.path.join(profile_dir, file)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    print(f"Warning: Could not remove {file}: {str(e)}")
+                    
+        # Clear Cache directory
+        cache_dir = os.path.join(profile_dir, 'Cache')
+        if os.path.exists(cache_dir):
+            for item in os.listdir(cache_dir):
+                try:
+                    item_path = os.path.join(cache_dir, item)
+                    if os.path.isfile(item_path):
+                        os.remove(item_path)
+                except Exception as e:
+                    print(f"Warning: Could not remove cache item {item}: {str(e)}")
+    except Exception as e:
+        print(f"Warning during session cleanup: {str(e)}")
+
 @app.route('/start_browser', methods=['POST'])
 def start_browser():
     data = request.json
@@ -270,257 +311,261 @@ def start_browser():
     try:
         kill_chrome_processes()
         time.sleep(1)  # Wait for processes to terminate
-    except Exception as e:
-        print(f"Warning during Chrome cleanup: {str(e)}")
-
-    chrome_path = data.get('chrome_path', '')
-    display = data.get('display', ':1')
-    user_profile = data.get('user_profile', 'Default')
-
-    if not chrome_path:
-        common_locations = [
-            r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-            r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '/usr/bin/google-chrome',
-            '/usr/bin/google-chrome-stable'
-        ]
-        for location in common_locations:
-            if os.path.exists(location):
-                chrome_path = location
-                break
-
-    if not chrome_path:
-        return jsonify({"error": "Chrome executable not found. Please provide the path."}), 400
-
-    try:
-        os.environ['DISPLAY'] = display
         
-        # Add these environment variables
-        os.environ['DBUS_SESSION_BUS_ADDRESS'] = '/dev/null'
-        os.environ['CHROME_DBUS_DISABLE'] = '1'
+        chrome_path = data.get('chrome_path', '')
+        display = data.get('display', ':1')
+        user_profile = data.get('user_profile', 'Default')
         
-        chrome_command = [
-            chrome_path,
-            f'--remote-debugging-port={debugging_port}',
-            '--start-maximized',
+        # Clear session data before starting new browser
+        clear_chrome_session(user_profile)
+
+        if not chrome_path:
+            common_locations = [
+                r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                '/usr/bin/google-chrome',
+                '/usr/bin/google-chrome-stable'
+            ]
+            for location in common_locations:
+                if os.path.exists(location):
+                    chrome_path = location
+                    break
+
+        if not chrome_path:
+            return jsonify({"error": "Chrome executable not found. Please provide the path."}), 400
+
+        try:
+            os.environ['DISPLAY'] = display
             
-            # Safer alternatives to --no-sandbox
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--disable-software-rasterizer',
+            # Add these environment variables
+            os.environ['DBUS_SESSION_BUS_ADDRESS'] = '/dev/null'
+            os.environ['CHROME_DBUS_DISABLE'] = '1'
             
-            # If running in Docker/CI, use these instead
-            '--no-zyote',              # Alternative to full sandbox disable
-            
-            # Rest of your flags...
-            '--force-device-scale-factor=1.25',
-            
-            # Add these D-Bus related flags
-            '--disable-dbus',  # Disable D-Bus usage
-            '--disable-notifications',  # Disable notifications that might need D-Bus
-            '--disable-features=MediaRouter,WebRTC',  # Disable features that might use D-Bus
-            
-            # Core settings for cookie persistence
-            f'--user-data-dir=chrome-data/{user_profile}',
-            '--persist-user-preferences',
-            f'--profile-directory={user_profile}',
-            
-            # Aggressive session restore disabling
-            '--disable-session-crashed-bubble',
-            '--no-restore-session-state',
-            '--disable-features=RestoreLastSessionOnStartup,SessionRestore,TabHoverCards,PageInfoV2Cards',
-            '--disable-session-service',
-            '--disable-crash-reporter',
-            '--disable-features=MediaRouter',
-            '--restore-last-session=false',
-            
-            # Aggressive popup and notification blocking
-            '--disable-notifications',
-            '--disable-popup-blocking',
-            '--disable-infobars',
-            '--disable-translate',
-            '--disable-sync',  # Prevents sync popups while keeping cookies
-            '--no-default-browser-check',
-            '--no-first-run',
-            
-            # Disable all update-related popups
-            '--disable-component-update',
-            '--simulate-outdated',
-            '--disable-features=UpdateNotifications',
-            
-            # Disable various automatic popups
-            '--disable-features=AutofillSaveCardBubbleV2',
-            '--disable-features=AutofillCreditCardAuthentication',
-            '--disable-features=PasswordRevamp',
-            '--disable-features=InterestFeedContentSuggestions',
-            
-            # Performance and stability settings
-            '--disable-gpu',
-            '--disable-dev-shm-usage',
-            '--disable-software-rasterizer',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-background-networking',
-            
-            # Additional popup prevention
-            '--disable-save-password-bubble',
-            '--disable-client-side-phishing-detection',
-            '--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync',
-            '--silent-debugger-extension-api',
-        ]
+            chrome_command = [
+                chrome_path,
+                f'--remote-debugging-port={debugging_port}',
+                '--start-maximized',
+                
+                # Safer alternatives to --no-sandbox
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-software-rasterizer',
+                
+                # If running in Docker/CI, use these instead
+                '--no-zyote',              # Alternative to full sandbox disable
+                
+                # Rest of your flags...
+                '--force-device-scale-factor=1.25',
+                
+                # Add these D-Bus related flags
+                '--disable-dbus',  # Disable D-Bus usage
+                '--disable-notifications',  # Disable notifications that might need D-Bus
+                '--disable-features=MediaRouter,WebRTC',  # Disable features that might use D-Bus
+                
+                # Core settings for cookie persistence
+                f'--user-data-dir=chrome-data/{user_profile}',
+                '--persist-user-preferences',
+                f'--profile-directory={user_profile}',
+                
+                # Aggressive session restore disabling
+                '--disable-session-crashed-bubble',
+                '--no-restore-session-state',
+                '--disable-features=RestoreLastSessionOnStartup,SessionRestore,TabHoverCards,PageInfoV2Cards',
+                '--disable-session-service',
+                '--disable-crash-reporter',
+                '--disable-features=MediaRouter',
+                '--restore-last-session=false',
+                
+                # Aggressive popup and notification blocking
+                '--disable-notifications',
+                '--disable-popup-blocking',
+                '--disable-infobars',
+                '--disable-translate',
+                '--disable-sync',  # Prevents sync popups while keeping cookies
+                '--no-default-browser-check',
+                '--no-first-run',
+                
+                # Disable all update-related popups
+                '--disable-component-update',
+                '--simulate-outdated',
+                '--disable-features=UpdateNotifications',
+                
+                # Disable various automatic popups
+                '--disable-features=AutofillSaveCardBubbleV2',
+                '--disable-features=AutofillCreditCardAuthentication',
+                '--disable-features=PasswordRevamp',
+                '--disable-features=InterestFeedContentSuggestions',
+                
+                # Performance and stability settings
+                '--disable-gpu',
+                '--disable-dev-shm-usage',
+                '--disable-software-rasterizer',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-background-networking',
+                
+                # Additional popup prevention
+                '--disable-save-password-bubble',
+                '--disable-client-side-phishing-detection',
+                '--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync',
+                '--silent-debugger-extension-api',
+            ]
 
 
-        # Create user data directory if it doesn't exist
-        user_data_dir = f'chrome-data/{user_profile}'
-        os.makedirs(user_data_dir, exist_ok=True)
+            # Create user data directory if it doesn't exist
+            user_data_dir = f'chrome-data/{user_profile}'
+            os.makedirs(user_data_dir, exist_ok=True)
 
-        # Enhanced script with more aggressive tooltip removal
-        remove_automation_flags_script = """
-        // Remove webdriver flag
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-
-        // Remove automation flags from Chrome
-        window.chrome = {
-            runtime: {},
-            loadTimes: function(){},
-            csi: function(){},
-            app: {},
-        };
-
-        // Remove automation-specific CSS
-        let automationStyle = document.querySelector('link[rel="stylesheet"][href*="automation"]');
-        if (automationStyle) {
-            automationStyle.remove();
-        }
-
-        // Function to remove unwanted elements
-        function removeUnwantedElements() {
-            // Remove automation banner
-            const banners = document.getElementsByClassName('infobar');
-            for (const banner of banners) {
-                if (banner.textContent.includes('automated')) {
-                    banner.remove();
-                }
-            }
-            
-            // More aggressive tooltip/button removal
-            const selectors = [
-                '[role="button"]',
-                '[role="tooltip"]',
-                '.restore-button',
-                '.restore-tab-button',
-                '.restore-pages-button',
-                '.session-restore',
-                '.tooltip',
-                '#restore-button',
-                '[title*="Restore"]',
-                '[aria-label*="Restore"]',
-                '[data-tooltip*="Restore"]'
-            ];
-            
-            selectors.forEach(selector => {
-                document.querySelectorAll(selector).forEach(element => {
-                    if (element.textContent?.includes('Restore') || 
-                        element.getAttribute('title')?.includes('Restore') ||
-                        element.getAttribute('aria-label')?.includes('Restore')) {
-                        element.remove();
-                    }
-                });
+            # Enhanced script with more aggressive tooltip removal
+            remove_automation_flags_script = """
+            // Remove webdriver flag
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
             });
 
-            // Remove any Chrome UI elements that might contain tooltips
-            const chromeUIElements = document.querySelectorAll('*');
-            chromeUIElements.forEach(element => {
-                if (element.shadowRoot) {
-                    const shadowElements = element.shadowRoot.querySelectorAll('*');
-                    shadowElements.forEach(shadowElement => {
-                        if (shadowElement.textContent?.includes('Restore')) {
-                            shadowElement.remove();
+            // Remove automation flags from Chrome
+            window.chrome = {
+                runtime: {},
+                loadTimes: function(){},
+                csi: function(){},
+                app: {},
+            };
+
+            // Remove automation-specific CSS
+            let automationStyle = document.querySelector('link[rel="stylesheet"][href*="automation"]');
+            if (automationStyle) {
+                automationStyle.remove();
+            }
+
+            // Function to remove unwanted elements
+            function removeUnwantedElements() {
+                // Remove automation banner
+                const banners = document.getElementsByClassName('infobar');
+                for (const banner of banners) {
+                    if (banner.textContent.includes('automated')) {
+                        banner.remove();
+                    }
+                }
+                
+                // More aggressive tooltip/button removal
+                const selectors = [
+                    '[role="button"]',
+                    '[role="tooltip"]',
+                    '.restore-button',
+                    '.restore-tab-button',
+                    '.restore-pages-button',
+                    '.session-restore',
+                    '.tooltip',
+                    '#restore-button',
+                    '[title*="Restore"]',
+                    '[aria-label*="Restore"]',
+                    '[data-tooltip*="Restore"]'
+                ];
+                
+                selectors.forEach(selector => {
+                    document.querySelectorAll(selector).forEach(element => {
+                        if (element.textContent?.includes('Restore') || 
+                            element.getAttribute('title')?.includes('Restore') ||
+                            element.getAttribute('aria-label')?.includes('Restore')) {
+                            element.remove();
                         }
                     });
-                }
-            });
-        }
-        
-        // Initial removal
-        removeUnwantedElements();
-        
-        // Monitor and remove any dynamically added elements
-        const observer = new MutationObserver((mutations) => {
-            removeUnwantedElements();
-        });
-        
-        observer.observe(document.documentElement, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['role', 'title', 'aria-label', 'data-tooltip']
-        });
+                });
 
-        // Also try to prevent the session restore functionality
-        try {
-            chrome.sessions.restore = undefined;
-            chrome.sessions = undefined;
-        } catch(e) {}
-        """
-
-        # Create a preferences file to disable session restore
-        prefs_file = os.path.join(user_data_dir, 'Default', 'Preferences')
-        os.makedirs(os.path.dirname(prefs_file), exist_ok=True)
-        
-        prefs = {
-            "profile": {
-                "exit_type": "Normal",
-                "exited_cleanly": True
-            },
-            "session": {
-                "restore_on_startup": 5,
-                "startup_urls": []
-            },
-            "browser": {
-                "custom_chrome_frame": False,
-                "has_seen_welcome_page": True,
-                "show_home_button": False,
-                "should_restore_session": False,
-                "enable_session_restore": False
+                // Remove any Chrome UI elements that might contain tooltips
+                const chromeUIElements = document.querySelectorAll('*');
+                chromeUIElements.forEach(element => {
+                    if (element.shadowRoot) {
+                        const shadowElements = element.shadowRoot.querySelectorAll('*');
+                        shadowElements.forEach(shadowElement => {
+                            if (shadowElement.textContent?.includes('Restore')) {
+                                shadowElement.remove();
+                            }
+                        });
+                    }
+                });
             }
-        }
-        
-        with open(prefs_file, 'w') as f:
-            json.dump(prefs, f)
+            
+            // Initial removal
+            removeUnwantedElements();
+            
+            // Monitor and remove any dynamically added elements
+            const observer = new MutationObserver((mutations) => {
+                removeUnwantedElements();
+            });
+            
+            observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['role', 'title', 'aria-label', 'data-tooltip']
+            });
 
-        subprocess.Popen(chrome_command, env=os.environ)
+            // Also try to prevent the session restore functionality
+            try {
+                chrome.sessions.restore = undefined;
+                chrome.sessions = undefined;
+            } catch(e) {}
+            """
 
-        # Wait for Chrome to start
-        time.sleep(2)
-        
-        # Connect to Chrome and inject the scripts
-        try:
-            driver = connect_to_chrome(debugging_port)
-            driver.execute_script(remove_automation_flags_script)
-            driver.execute_script(get_console_logging_script())
+            # Create a preferences file to disable session restore
+            prefs_file = os.path.join(user_data_dir, 'Default', 'Preferences')
+            os.makedirs(os.path.dirname(prefs_file), exist_ok=True)
+            
+            prefs = {
+                "profile": {
+                    "exit_type": "Normal",
+                    "exited_cleanly": True
+                },
+                "session": {
+                    "restore_on_startup": 5,
+                    "startup_urls": []
+                },
+                "browser": {
+                    "custom_chrome_frame": False,
+                    "has_seen_welcome_page": True,
+                    "show_home_button": False,
+                    "should_restore_session": False,
+                    "enable_session_restore": False
+                }
+            }
+            
+            with open(prefs_file, 'w') as f:
+                json.dump(prefs, f)
+
+            subprocess.Popen(chrome_command, env=os.environ)
+
+            # Wait for Chrome to start
+            time.sleep(2)
+            
+            # Connect to Chrome and inject the scripts
+            try:
+                driver = connect_to_chrome(debugging_port)
+                driver.execute_script(remove_automation_flags_script)
+                driver.execute_script(get_console_logging_script())
+            except Exception as e:
+                print(f"Warning: Failed to inject scripts: {str(e)}")
+
+            # Get Chrome info and return response
+            chrome_info = get_chrome_info(debugging_port)
+            if chrome_info["running"]:
+                return jsonify({
+                    "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'",
+                    "url": chrome_info["url"],
+                    "title": chrome_info["title"]
+                }), 200
+            else:
+                return jsonify({
+                    "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'"
+                }), 200
+
         except Exception as e:
-            print(f"Warning: Failed to inject scripts: {str(e)}")
-
-        # Get Chrome info and return response
-        chrome_info = get_chrome_info(debugging_port)
-        if chrome_info["running"]:
-            return jsonify({
-                "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'",
-                "url": chrome_info["url"],
-                "title": chrome_info["title"]
-            }), 200
-        else:
-            return jsonify({
-                "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'"
-            }), 200
+            return jsonify({"error": f"Failed to start Chrome: {str(e)}"}), 500
 
     except Exception as e:
-        return jsonify({"error": f"Failed to start Chrome: {str(e)}"}), 500
+        print(f"Warning during Chrome cleanup: {str(e)}")
 
 def is_chrome_running(port):
     try:
