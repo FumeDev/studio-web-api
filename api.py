@@ -311,7 +311,6 @@ def start_browser():
             '--disable-software-rasterizer',
             
             # If running in Docker/CI, use these instead
-            '--disable-setuid-sandbox',  # Less severe than --no-sandbox
             '--no-zyote',              # Alternative to full sandbox disable
             
             # Rest of your flags...
