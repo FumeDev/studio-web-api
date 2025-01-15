@@ -277,7 +277,8 @@ def clear_chrome_session(user_profile):
         'History',
         'Login Data',
         'Network Action Predictor',
-        'Network Persistent State'
+        'Network Persistent State',
+        'Last URL'  # Add this file
     ]
     
     try:
@@ -290,16 +291,25 @@ def clear_chrome_session(user_profile):
                 except Exception as e:
                     print(f"Warning: Could not remove {file}: {str(e)}")
                     
-        # Clear Cache directory
-        cache_dir = os.path.join(profile_dir, 'Cache')
-        if os.path.exists(cache_dir):
-            for item in os.listdir(cache_dir):
-                try:
-                    item_path = os.path.join(cache_dir, item)
-                    if os.path.isfile(item_path):
-                        os.remove(item_path)
-                except Exception as e:
-                    print(f"Warning: Could not remove cache item {item}: {str(e)}")
+        # Update preferences to start with blank page
+        prefs_file = os.path.join(profile_dir, 'Preferences')
+        if os.path.exists(prefs_file):
+            try:
+                with open(prefs_file, 'r') as f:
+                    prefs = json.load(f)
+                
+                # Force start with blank page
+                prefs['session'] = {
+                    'restore_on_startup': 5,  # Don't restore
+                    'startup_urls': [],  # No startup URLs
+                    'last_opened_url': ''  # Clear last URL
+                }
+                
+                with open(prefs_file, 'w') as f:
+                    json.dump(prefs, f)
+            except Exception as e:
+                print(f"Warning: Could not update preferences: {str(e)}")
+                    
     except Exception as e:
         print(f"Warning during session cleanup: {str(e)}")
 
@@ -346,6 +356,11 @@ def start_browser():
                 chrome_path,
                 f'--remote-debugging-port={debugging_port}',
                 '--start-maximized',
+                
+                # Add these flags to force blank start
+                '--homepage=about:blank',
+                '--start-page=about:blank',
+                '--restore-last-session=false',
                 
                 # Safer alternatives to --no-sandbox
                 '--disable-dev-shm-usage',
