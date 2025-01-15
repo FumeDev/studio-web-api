@@ -372,12 +372,6 @@ def start_browser():
             '--silent-debugger-extension-api',
         ]
 
-        # Add proper user permissions instead of disabling sandbox
-        if os.geteuid() == 0:  # If running as root
-            chrome_command.extend([
-                '--disable-setuid-sandbox',
-                '--disable-seccomp-filter-sandbox'
-            ])
 
         # Create user data directory if it doesn't exist
         user_data_dir = f'chrome-data/{user_profile}'
