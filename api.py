@@ -295,12 +295,32 @@ def start_browser():
 
     try:
         os.environ['DISPLAY'] = display
-
+        
+        # Add these environment variables
+        os.environ['DBUS_SESSION_BUS_ADDRESS'] = '/dev/null'
+        os.environ['CHROME_DBUS_DISABLE'] = '1'
+        
         chrome_command = [
             chrome_path,
             f'--remote-debugging-port={debugging_port}',
             '--start-maximized',
+            
+            # Safer alternatives to --no-sandbox
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            
+            # If running in Docker/CI, use these instead
+            '--disable-setuid-sandbox',  # Less severe than --no-sandbox
+            '--no-zyote',              # Alternative to full sandbox disable
+            
+            # Rest of your flags...
             '--force-device-scale-factor=1.25',
+            
+            # Add these D-Bus related flags
+            '--disable-dbus',  # Disable D-Bus usage
+            '--disable-notifications',  # Disable notifications that might need D-Bus
+            '--disable-features=MediaRouter,WebRTC',  # Disable features that might use D-Bus
             
             # Core settings for cookie persistence
             f'--user-data-dir=chrome-data/{user_profile}',
@@ -352,8 +372,8 @@ def start_browser():
             '--silent-debugger-extension-api',
         ]
 
-        # If running as root, add sandbox disabling
-        if os.geteuid() == 0:
+        # Add proper user permissions instead of disabling sandbox
+        if os.geteuid() == 0:  # If running as root
             chrome_command.extend([
                 '--disable-setuid-sandbox',
                 '--disable-seccomp-filter-sandbox'
