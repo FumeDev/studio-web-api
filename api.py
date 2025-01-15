@@ -313,8 +313,21 @@ def clear_chrome_session(user_profile):
     except Exception as e:
         print(f"Warning during session cleanup: {str(e)}")
 
+def is_chrome_running(port):
+    """Check if Chrome is running on the specified debugging port"""
+    try:
+        response = requests.get(f'http://localhost:{port}/json/version', timeout=1)
+        return response.status_code == 200
+    except requests.exceptions.RequestException:
+        return False
+
 def close_chrome_gracefully(debugging_port=9222):
     """Attempt to close Chrome gracefully before forcing kill"""
+    # First check if Chrome is running to avoid timeout
+    if not is_chrome_running(debugging_port):
+        print("No Chrome instance found running")
+        return True
+        
     try:
         # Try to connect to existing Chrome instance
         chrome_options = Options()
@@ -606,13 +619,6 @@ def start_browser():
 
     except Exception as e:
         print(f"Warning during Chrome cleanup: {str(e)}")
-
-def is_chrome_running(port):
-    try:
-        response = requests.get(f'http://localhost:{port}/json/version')
-        return response.status_code == 200
-    except requests.exceptions.ConnectionError:
-        return False
 
 def connect_to_chrome(debugging_port=9222):
     chrome_options = Options()
