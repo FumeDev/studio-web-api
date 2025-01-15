@@ -313,13 +313,38 @@ def clear_chrome_session(user_profile):
     except Exception as e:
         print(f"Warning during session cleanup: {str(e)}")
 
+def close_chrome_gracefully(debugging_port=9222):
+    """Attempt to close Chrome gracefully before forcing kill"""
+    try:
+        # Try to connect to existing Chrome instance
+        chrome_options = Options()
+        chrome_options.add_experimental_option("debuggerAddress", f"localhost:{debugging_port}")
+        driver = webdriver.Chrome(options=chrome_options)
+        
+        # Close all windows/tabs
+        for handle in driver.window_handles:
+            driver.switch_to.window(handle)
+            driver.close()
+            
+        # Quit the browser
+        driver.quit()
+        time.sleep(1)  # Give it a moment to close
+        
+        return True
+    except Exception as e:
+        print(f"Graceful close failed: {str(e)}")
+        return False
+
 @app.route('/start_browser', methods=['POST'])
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
 
     try:
-        kill_chrome_processes()
+        # Try graceful close first
+        if not close_chrome_gracefully(debugging_port):
+            # Fall back to force kill if graceful close fails
+            kill_chrome_processes()
         time.sleep(1)  # Wait for processes to terminate
         
         chrome_path = data.get('chrome_path', '')
