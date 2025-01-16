@@ -660,7 +660,6 @@ def click_element(driver):
     y_coord = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
-    SCREENSHOT_TOP_CROP = 50  # Define constant for the crop amount
 
     if not xpath and (x_coord is None or y_coord is None):
         return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
@@ -698,9 +697,9 @@ def click_element(driver):
                 # Get the window position
                 window_rect = driver.get_window_rect()
                 
-                # Calculate absolute screen coordinates, adjusting for the cropped top
+                # Calculate absolute screen coordinates (no offset)
                 abs_x = window_rect['x'] + center_x
-                abs_y = window_rect['y'] + center_y + SCREENSHOT_TOP_CROP
+                abs_y = window_rect['y'] + center_y
                 
                 # Move mouse and perform click with retry
                 pyautogui.moveTo(abs_x, abs_y, duration=0.2)
@@ -710,16 +709,12 @@ def click_element(driver):
                 result = "Click performed at element location"
                 
             else:
-                # Coordinate-based clicking logic
-                # Add the crop offset to the y-coordinate
-                adjusted_y = y_coord + SCREENSHOT_TOP_CROP
-                
                 # Get window position
                 window_rect = driver.get_window_rect()
                 
-                # Calculate absolute screen coordinates
+                # Calculate absolute screen coordinates (no offset)
                 abs_x = window_rect['x'] + x_coord
-                abs_y = window_rect['y'] + adjusted_y
+                abs_y = window_rect['y'] + y_coord
                 
                 # Get element info before clicking
                 element_info = driver.execute_script("""
@@ -740,7 +735,7 @@ def click_element(driver):
                         return null;
                     }
                     return getElementFromPoint(arguments[0], arguments[1]);
-                """, x_coord, adjusted_y)
+                """, x_coord, y_coord)
                 
                 # Move mouse and perform click with retry
                 pyautogui.moveTo(abs_x, abs_y, duration=0.2)
@@ -750,8 +745,7 @@ def click_element(driver):
                 result = {
                     "message": "Click performed at coordinates",
                     "intended_coordinates": {"x": x_coord, "y": y_coord},
-                    "adjusted_coordinates": {"x": abs_x, "y": abs_y},
-                    "crop_offset": SCREENSHOT_TOP_CROP,
+                    "actual_coordinates": {"x": abs_x, "y": abs_y},
                     "clicked_element": element_info
                 }
 
@@ -774,7 +768,6 @@ def double_click_element(driver):
     y_coord = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
-    SCREENSHOT_TOP_CROP = 50  # Define constant for the crop amount
 
     if not xpath and (x_coord is None or y_coord is None):
         return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
@@ -794,9 +787,9 @@ def double_click_element(driver):
             element_location = element.location
             window_rect = driver.get_window_rect()
             
-            # Calculate absolute screen coordinates for the element, adjusting for crop
+            # Calculate absolute screen coordinates (no offset)
             abs_x = window_rect['x'] + element_location['x']
-            abs_y = window_rect['y'] + element_location['y'] + SCREENSHOT_TOP_CROP
+            abs_y = window_rect['y'] + element_location['y']
             
             # Move mouse and double click
             pyautogui.moveTo(abs_x, abs_y)
@@ -805,15 +798,12 @@ def double_click_element(driver):
             result = "Double click performed at element location"
             
         else:
-            # Add the crop offset to the y-coordinate
-            adjusted_y = y_coord + SCREENSHOT_TOP_CROP
-            
             # Get window position
             window_rect = driver.get_window_rect()
             
-            # Calculate absolute screen coordinates
+            # Calculate absolute screen coordinates (no offset)
             abs_x = window_rect['x'] + x_coord
-            abs_y = window_rect['y'] + adjusted_y
+            abs_y = window_rect['y'] + y_coord
             
             # Get element info before clicking
             element_info = driver.execute_script("""
@@ -834,7 +824,7 @@ def double_click_element(driver):
                     return null;
                 }
                 return getElementFromPoint(arguments[0], arguments[1]);
-            """, x_coord, adjusted_y)
+            """, x_coord, y_coord)
             
             # Move mouse and double click
             pyautogui.moveTo(abs_x, abs_y)
@@ -843,8 +833,7 @@ def double_click_element(driver):
             result = {
                 "message": "Double click performed at coordinates",
                 "intended_coordinates": {"x": x_coord, "y": y_coord},
-                "adjusted_coordinates": {"x": abs_x, "y": abs_y},
-                "crop_offset": SCREENSHOT_TOP_CROP,
+                "actual_coordinates": {"x": abs_x, "y": abs_y},
                 "clicked_element": element_info
             }
 
