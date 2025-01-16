@@ -1226,128 +1226,71 @@ def look(driver):
             # If timeout occurs, capture what's available
             window_rect = driver.get_window_rect()
             
-            # Get the actual window dimensions including decorations and tab bar
-            outer_size = driver.execute_script("""
-                return {
-                    width: window.outerWidth,
-                    height: window.outerHeight,
-                    devicePixelRatio: window.devicePixelRatio || 1,
-                    screenY: window.screenY || window.screenTop || 0,
-                    windowHeight: window.outerHeight
-                };
-            """)
+            # Take full screenshot
+            screenshot = pyautogui.screenshot()
             
-            # Calculate the complete window dimensions starting from the absolute top
-            complete_rect = {
-                'x': window_rect['x'],
-                'y': int(outer_size['screenY']),  # Use absolute screen Y position
-                'width': int(outer_size['width'] * outer_size['devicePixelRatio']),
-                'height': int(outer_size['windowHeight'] * outer_size['devicePixelRatio'])
-            }
+            # Get screen size
+            screen_width, screen_height = screenshot.size
             
-            screenshot = pyautogui.screenshot(region=(
-                complete_rect['x'], 
-                complete_rect['y'], 
-                complete_rect['width'], 
-                complete_rect['height']
-            ))
+            # Crop 30 pixels from top (to avoid partial window)
+            cropped_screenshot = screenshot.crop((0, 30, screen_width, screen_height))
             
             # Convert PIL image to base64
             import io
             import base64
             buffered = io.BytesIO()
-            screenshot.save(buffered, format="PNG")
+            cropped_screenshot.save(buffered, format="PNG")
             screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
             
             return jsonify({
                 "error": "Timed out waiting for page to load",
                 "screenshot": screenshot_base64,
                 "current_url": driver.current_url,
-                "page_title": driver.title,
-                "window_info": complete_rect
+                "page_title": driver.title
             }), 200
 
-        # Get window position and complete dimensions
-        window_rect = driver.get_window_rect()
+        # Take full screenshot
+        screenshot = pyautogui.screenshot()
         
-        # Get the actual window dimensions including decorations and tab bar
-        outer_size = driver.execute_script("""
-            return {
-                width: window.outerWidth,
-                height: window.outerHeight,
-                devicePixelRatio: window.devicePixelRatio || 1,
-                screenY: window.screenY || window.screenTop || 0,
-                windowHeight: window.outerHeight
-            };
-        """)
+        # Get screen size
+        screen_width, screen_height = screenshot.size
         
-        # Calculate the complete window dimensions starting from the absolute top
-        complete_rect = {
-            'x': window_rect['x'],
-            'y': int(outer_size['screenY']),  # Use absolute screen Y position
-            'width': int(outer_size['width'] * outer_size['devicePixelRatio']),
-            'height': int(outer_size['windowHeight'] * outer_size['devicePixelRatio'])
-        }
-        
-        # Take screenshot of the entire window with adjusted dimensions
-        screenshot = pyautogui.screenshot(region=(
-            complete_rect['x'], 
-            complete_rect['y'], 
-            complete_rect['width'], 
-            complete_rect['height']
-        ))
+        # Crop 30 pixels from top (to avoid partial window)
+        cropped_screenshot = screenshot.crop((0, 30, screen_width, screen_height))
         
         # Convert PIL image to base64
         import io
         import base64
         buffered = io.BytesIO()
-        screenshot.save(buffered, format="PNG")
+        cropped_screenshot.save(buffered, format="PNG")
         screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
 
         # Get DOM content
         dom_content = driver.execute_script("return document.documentElement.outerHTML;")
 
-        # Return the response with complete window info
+        # Return the response
         response_data = {
             "screenshot": screenshot_base64,
             "dom_content": dom_content,
             "current_url": driver.current_url,
-            "page_title": driver.title,
-            "window_info": complete_rect,
-            "device_pixel_ratio": outer_size['devicePixelRatio']
+            "page_title": driver.title
         }
         return jsonify(response_data)
     except Exception as e:
         # Capture any unexpected errors
         try:
-            window_rect = driver.get_window_rect()
-            outer_size = driver.execute_script("""
-                return {
-                    width: window.outerWidth,
-                    height: window.outerHeight,
-                    devicePixelRatio: window.devicePixelRatio || 1,
-                    screenY: window.screenY || window.screenTop || 0,
-                    windowHeight: window.outerHeight
-                };
-            """)
+            # Take full screenshot
+            screenshot = pyautogui.screenshot()
             
-            complete_rect = {
-                'x': window_rect['x'],
-                'y': int(outer_size['screenY']),  # Use absolute screen Y position
-                'width': int(outer_size['width'] * outer_size['devicePixelRatio']),
-                'height': int(outer_size['windowHeight'] * outer_size['devicePixelRatio'])
-            }
+            # Get screen size
+            screen_width, screen_height = screenshot.size
             
-            error_screenshot = pyautogui.screenshot(region=(
-                complete_rect['x'], 
-                complete_rect['y'], 
-                complete_rect['width'], 
-                complete_rect['height']
-            ))
+            # Crop 30 pixels from top
+            cropped_screenshot = screenshot.crop((0, 30, screen_width, screen_height))
             
-            # Convert error screenshot to base64
+            # Convert to base64
             buffered = io.BytesIO()
-            error_screenshot.save(buffered, format="PNG")
+            cropped_screenshot.save(buffered, format="PNG")
             error_screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
         except:
             error_screenshot_base64 = None
@@ -1356,8 +1299,7 @@ def look(driver):
             "error": f"Unexpected error: {str(e)}",
             "error_screenshot": error_screenshot_base64,
             "current_url": driver.current_url,
-            "page_title": driver.title,
-            "window_info": complete_rect if 'complete_rect' in locals() else None
+            "page_title": driver.title
         }), 200
     
 @app.route('/deep-look', methods=['POST'])
