@@ -1286,7 +1286,7 @@ def look(driver):
             screen_width, screen_height = screenshot.size
             
             # Crop 30 pixels from top
-            cropped_screenshot = screenshot.crop((0, 30, screen_width, screen_height))
+            cropped_screenshot = screenshot.crop((0, 50, screen_width, screen_height))
             
             # Convert to base64
             buffered = io.BytesIO()
