@@ -1225,11 +1225,29 @@ def look(driver):
         except TimeoutException:
             # If timeout occurs, capture what's available
             window_rect = driver.get_window_rect()
+            
+            # Get the actual window dimensions including decorations
+            outer_size = driver.execute_script("""
+                return {
+                    width: window.outerWidth,
+                    height: window.outerHeight,
+                    devicePixelRatio: window.devicePixelRatio || 1
+                };
+            """)
+            
+            # Calculate the complete window dimensions
+            complete_rect = {
+                'x': window_rect['x'],
+                'y': window_rect['y'],
+                'width': int(outer_size['width'] * outer_size['devicePixelRatio']),
+                'height': int(outer_size['height'] * outer_size['devicePixelRatio'])
+            }
+            
             screenshot = pyautogui.screenshot(region=(
-                window_rect['x'], 
-                window_rect['y'], 
-                window_rect['width'], 
-                window_rect['height']
+                complete_rect['x'], 
+                complete_rect['y'], 
+                complete_rect['width'], 
+                complete_rect['height']
             ))
             
             # Convert PIL image to base64
@@ -1243,18 +1261,36 @@ def look(driver):
                 "error": "Timed out waiting for page to load",
                 "screenshot": screenshot_base64,
                 "current_url": driver.current_url,
-                "page_title": driver.title
+                "page_title": driver.title,
+                "window_info": complete_rect
             }), 200
 
-        # Get window position and size
+        # Get window position and complete dimensions
         window_rect = driver.get_window_rect()
         
-        # Take screenshot of the entire window
+        # Get the actual window dimensions including decorations and device pixel ratio
+        outer_size = driver.execute_script("""
+            return {
+                width: window.outerWidth,
+                height: window.outerHeight,
+                devicePixelRatio: window.devicePixelRatio || 1
+            };
+        """)
+        
+        # Calculate the complete window dimensions
+        complete_rect = {
+            'x': window_rect['x'],
+            'y': window_rect['y'],
+            'width': int(outer_size['width'] * outer_size['devicePixelRatio']),
+            'height': int(outer_size['height'] * outer_size['devicePixelRatio'])
+        }
+        
+        # Take screenshot of the entire window with adjusted dimensions
         screenshot = pyautogui.screenshot(region=(
-            window_rect['x'], 
-            window_rect['y'], 
-            window_rect['width'], 
-            window_rect['height']
+            complete_rect['x'], 
+            complete_rect['y'], 
+            complete_rect['width'], 
+            complete_rect['height']
         ))
         
         # Convert PIL image to base64
@@ -1267,24 +1303,40 @@ def look(driver):
         # Get DOM content
         dom_content = driver.execute_script("return document.documentElement.outerHTML;")
 
-        # Return the response
+        # Return the response with complete window info
         response_data = {
             "screenshot": screenshot_base64,
             "dom_content": dom_content,
             "current_url": driver.current_url,
             "page_title": driver.title,
-            "window_info": window_rect
+            "window_info": complete_rect,
+            "device_pixel_ratio": outer_size['devicePixelRatio']
         }
         return jsonify(response_data)
     except Exception as e:
         # Capture any unexpected errors
         try:
             window_rect = driver.get_window_rect()
+            outer_size = driver.execute_script("""
+                return {
+                    width: window.outerWidth,
+                    height: window.outerHeight,
+                    devicePixelRatio: window.devicePixelRatio || 1
+                };
+            """)
+            
+            complete_rect = {
+                'x': window_rect['x'],
+                'y': window_rect['y'],
+                'width': int(outer_size['width'] * outer_size['devicePixelRatio']),
+                'height': int(outer_size['height'] * outer_size['devicePixelRatio'])
+            }
+            
             error_screenshot = pyautogui.screenshot(region=(
-                window_rect['x'], 
-                window_rect['y'], 
-                window_rect['width'], 
-                window_rect['height']
+                complete_rect['x'], 
+                complete_rect['y'], 
+                complete_rect['width'], 
+                complete_rect['height']
             ))
             
             # Convert error screenshot to base64
@@ -1298,7 +1350,8 @@ def look(driver):
             "error": f"Unexpected error: {str(e)}",
             "error_screenshot": error_screenshot_base64,
             "current_url": driver.current_url,
-            "page_title": driver.title
+            "page_title": driver.title,
+            "window_info": complete_rect if 'complete_rect' in locals() else None
         }), 200
     
 @app.route('/deep-look', methods=['POST'])
