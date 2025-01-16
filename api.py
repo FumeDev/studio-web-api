@@ -660,6 +660,7 @@ def click_element(driver):
     y_coord = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
+    SCREENSHOT_TOP_CROP = 50  # Define constant for the crop amount
 
     if not xpath and (x_coord is None or y_coord is None):
         return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
@@ -677,16 +678,6 @@ def click_element(driver):
             pyautogui.PAUSE = 0.1
             pyautogui.FAILSAFE = True
 
-            # Focus the Chrome window first
-            window_rect = driver.get_window_rect()
-            try:
-                if platform.system() == 'Linux':
-                    window_id = subprocess.check_output(["xdotool", "search", "--sync", "--onlyvisible", "--class", "chrome"]).decode().strip().split('\n')[0]
-                    subprocess.check_call(["xdotool", "windowactivate", window_id])
-                time.sleep(0.2)
-            except Exception as e:
-                print(f"Warning: Could not focus window: {str(e)}")
-
             if xpath:
                 # XPath-based clicking logic
                 element = WebDriverWait(driver, wait_time).until(
@@ -698,50 +689,37 @@ def click_element(driver):
                 )
                 
                 # Get element's position relative to viewport
-                element_rect = element.rect  # This gets both position and size
-                content_offset = get_browser_content_offset(driver)
+                element_rect = element.rect
                 
                 # Calculate center point of the element
                 center_x = element_rect['x'] + (element_rect['width'] / 2)
                 center_y = element_rect['y'] + (element_rect['height'] / 2)
                 
-                # Calculate absolute screen coordinates
-                abs_x = int(window_rect['x'] + content_offset['left'] + center_x)
-                abs_y = int(window_rect['y'] + content_offset['top'] + center_y)
+                # Get the window position
+                window_rect = driver.get_window_rect()
+                
+                # Calculate absolute screen coordinates, adjusting for the cropped top
+                abs_x = window_rect['x'] + center_x
+                abs_y = window_rect['y'] + center_y + SCREENSHOT_TOP_CROP
                 
                 # Move mouse and perform click with retry
                 pyautogui.moveTo(abs_x, abs_y, duration=0.2)
                 time.sleep(0.1)
                 pyautogui.click()
                 
-                if element.tag_name.lower() == 'input':
-                    try:
-                        element.is_selected()
-                        break
-                    except:
-                        if attempt == max_retries - 1:
-                            raise
-                        time.sleep(0.2)
-                else:
-                    break
-                
                 result = "Click performed at element location"
                 
             else:
                 # Coordinate-based clicking logic
-                viewport_offset = driver.execute_script("""
-                    return {
-                        top: window.outerHeight - window.innerHeight + 
-                             (window.screenY || window.screenTop || 0),
-                        left: (window.screenX || window.screenLeft || 0),
-                        scrollX: window.scrollX || window.pageXOffset,
-                        scrollY: window.scrollY || window.pageYOffset
-                    };
-                """)
+                # Add the crop offset to the y-coordinate
+                adjusted_y = y_coord + SCREENSHOT_TOP_CROP
                 
-                # Calculate absolute screen coordinates accounting for all offsets
-                abs_x = int(window_rect['x'] + x_coord)
-                abs_y = int(window_rect['y'] + viewport_offset['top'] + y_coord)
+                # Get window position
+                window_rect = driver.get_window_rect()
+                
+                # Calculate absolute screen coordinates
+                abs_x = window_rect['x'] + x_coord
+                abs_y = window_rect['y'] + adjusted_y
                 
                 # Get element info before clicking
                 element_info = driver.execute_script("""
@@ -762,7 +740,7 @@ def click_element(driver):
                         return null;
                     }
                     return getElementFromPoint(arguments[0], arguments[1]);
-                """, x_coord, y_coord)
+                """, x_coord, adjusted_y)
                 
                 # Move mouse and perform click with retry
                 pyautogui.moveTo(abs_x, abs_y, duration=0.2)
@@ -772,13 +750,11 @@ def click_element(driver):
                 result = {
                     "message": "Click performed at coordinates",
                     "intended_coordinates": {"x": x_coord, "y": y_coord},
-                    "actual_coordinates": {"x": abs_x, "y": abs_y},
-                    "viewport_offset": viewport_offset,
-                    "window_info": window_rect,
+                    "adjusted_coordinates": {"x": abs_x, "y": abs_y},
+                    "crop_offset": SCREENSHOT_TOP_CROP,
                     "clicked_element": element_info
                 }
 
-            # If we get here, the click was successful
             return jsonify(result), 200
 
         except Exception as e:
@@ -787,7 +763,6 @@ def click_element(driver):
             print(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
 
-    # This should never be reached due to the raise in the loop
     return jsonify({"error": "All retry attempts failed"}), 500
 
 @app.route('/double_click_element', methods=['POST'])
@@ -799,6 +774,7 @@ def double_click_element(driver):
     y_coord = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
+    SCREENSHOT_TOP_CROP = 50  # Define constant for the crop amount
 
     if not xpath and (x_coord is None or y_coord is None):
         return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
@@ -818,12 +794,9 @@ def double_click_element(driver):
             element_location = element.location
             window_rect = driver.get_window_rect()
             
-            # Calculate the browser's content offset
-            content_offset = get_browser_content_offset(driver)
-            
-            # Calculate absolute screen coordinates for the element
-            abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
-            abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
+            # Calculate absolute screen coordinates for the element, adjusting for crop
+            abs_x = window_rect['x'] + element_location['x']
+            abs_y = window_rect['y'] + element_location['y'] + SCREENSHOT_TOP_CROP
             
             # Move mouse and double click
             pyautogui.moveTo(abs_x, abs_y)
@@ -832,24 +805,17 @@ def double_click_element(driver):
             result = "Double click performed at element location"
             
         else:
-            # Get window position and size information
+            # Add the crop offset to the y-coordinate
+            adjusted_y = y_coord + SCREENSHOT_TOP_CROP
+            
+            # Get window position
             window_rect = driver.get_window_rect()
             
-            # Get the browser's viewport offset
-            viewport_offset = driver.execute_script("""
-                return {
-                    top: window.outerHeight - window.innerHeight,
-                    left: window.outerWidth - window.innerWidth,
-                    scrollX: window.scrollX || window.pageXOffset,
-                    scrollY: window.scrollY || window.pageYOffset
-                };
-            """)
-            
-            # Calculate absolute screen coordinates accounting for viewport offset
+            # Calculate absolute screen coordinates
             abs_x = window_rect['x'] + x_coord
-            abs_y = window_rect['y'] + y_coord + viewport_offset['top']
+            abs_y = window_rect['y'] + adjusted_y
             
-            # Get element at coordinates before clicking (for debugging)
+            # Get element info before clicking
             element_info = driver.execute_script("""
                 function getElementFromPoint(x, y) {
                     const element = document.elementFromPoint(x, y);
@@ -868,7 +834,7 @@ def double_click_element(driver):
                     return null;
                 }
                 return getElementFromPoint(arguments[0], arguments[1]);
-            """, x_coord, y_coord)
+            """, x_coord, adjusted_y)
             
             # Move mouse and double click
             pyautogui.moveTo(abs_x, abs_y)
@@ -877,9 +843,8 @@ def double_click_element(driver):
             result = {
                 "message": "Double click performed at coordinates",
                 "intended_coordinates": {"x": x_coord, "y": y_coord},
-                "actual_coordinates": {"x": abs_x, "y": abs_y},
-                "viewport_offset": viewport_offset,
-                "window_info": window_rect,
+                "adjusted_coordinates": {"x": abs_x, "y": abs_y},
+                "crop_offset": SCREENSHOT_TOP_CROP,
                 "clicked_element": element_info
             }
 
