@@ -620,6 +620,13 @@ def start_browser():
     except Exception as e:
         print(f"Warning during Chrome cleanup: {str(e)}")
 
+def is_chrome_running(port):
+    try:
+        response = requests.get(f'http://localhost:{port}/json/version')
+        return response.status_code == 200
+    except requests.exceptions.ConnectionError:
+        return False
+
 def connect_to_chrome(debugging_port=9222):
     chrome_options = Options()
     chrome_options.add_experimental_option("debuggerAddress", f"localhost:{debugging_port}")
@@ -1216,127 +1223,83 @@ def look(driver):
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
         except TimeoutException:
-            # If timeout occurs, capture what's available on the page
-            error_content = driver.page_source
-            error_screenshot = driver.get_screenshot_as_base64()
+            # If timeout occurs, capture what's available
+            window_rect = driver.get_window_rect()
+            screenshot = pyautogui.screenshot(region=(
+                window_rect['x'], 
+                window_rect['y'], 
+                window_rect['width'], 
+                window_rect['height']
+            ))
+            
+            # Convert PIL image to base64
+            import io
+            import base64
+            buffered = io.BytesIO()
+            screenshot.save(buffered, format="PNG")
+            screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
+            
             return jsonify({
                 "error": "Timed out waiting for page to load",
-                "error_content": error_content,
-                "error_screenshot": error_screenshot,
+                "screenshot": screenshot_base64,
                 "current_url": driver.current_url,
                 "page_title": driver.title
-            }), 200  # Return 200 to allow further processing of the error
+            }), 200
 
-        # Attempt to capture viewport data with error handling
-        screenshot, dom_content = safe_capture_viewport_data(driver)
+        # Get window position and size
+        window_rect = driver.get_window_rect()
+        
+        # Take screenshot of the entire window
+        screenshot = pyautogui.screenshot(region=(
+            window_rect['x'], 
+            window_rect['y'], 
+            window_rect['width'], 
+            window_rect['height']
+        ))
+        
+        # Convert PIL image to base64
+        import io
+        import base64
+        buffered = io.BytesIO()
+        screenshot.save(buffered, format="PNG")
+        screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
 
-        if dom_content is None:
-            # If DOM content capture fails, return what we can
-            error_content = driver.page_source
-            return jsonify({
-                "error": "Failed to capture DOM content",
-                "error_content": error_content,
-                "screenshot": screenshot if screenshot else driver.get_screenshot_as_base64(),
-                "current_url": driver.current_url,
-                "page_title": driver.title
-            }), 200  # Return 200 to allow further processing of the error
+        # Get DOM content
+        dom_content = driver.execute_script("return document.documentElement.outerHTML;")
 
-        if screenshot is None:
-            # If screenshot capture fails, return what we can
-            return jsonify({
-                "error": "Failed to capture screenshot",
-                "dom_content": dom_content,
-                "current_url": driver.current_url,
-                "page_title": driver.title
-            }), 200  # Return 200 to allow further processing of the error
-
-        # Modified generate_response to include URL and title
+        # Return the response
         response_data = {
-            "screenshot": screenshot,
+            "screenshot": screenshot_base64,
             "dom_content": dom_content,
             "current_url": driver.current_url,
-            "page_title": driver.title
+            "page_title": driver.title,
+            "window_info": window_rect
         }
         return jsonify(response_data)
     except Exception as e:
         # Capture any unexpected errors
-        error_content = driver.page_source
-        error_screenshot = driver.get_screenshot_as_base64()
+        try:
+            window_rect = driver.get_window_rect()
+            error_screenshot = pyautogui.screenshot(region=(
+                window_rect['x'], 
+                window_rect['y'], 
+                window_rect['width'], 
+                window_rect['height']
+            ))
+            
+            # Convert error screenshot to base64
+            buffered = io.BytesIO()
+            error_screenshot.save(buffered, format="PNG")
+            error_screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
+        except:
+            error_screenshot_base64 = None
+
         return jsonify({
             "error": f"Unexpected error: {str(e)}",
-            "error_content": error_content,
-            "error_screenshot": error_screenshot,
+            "error_screenshot": error_screenshot_base64,
             "current_url": driver.current_url,
             "page_title": driver.title
-        }), 200  # Return 200 to allow further processing of the error
-
-def safe_capture_viewport_data(driver):
-    import logging
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    try:
-        # Get the document.readyState
-        ready_state = driver.execute_script("return document.readyState")
-        
-        # If the page is not complete, wait a bit more
-        if ready_state != "complete":
-            try:
-                WebDriverWait(driver, 10).until(
-                    lambda d: d.execute_script("return document.readyState") == "complete"
-                )
-            except TimeoutException:
-                logger.warning("Timed out waiting for page to be complete. Proceeding anyway.")
-
-        # Attempt to capture screenshot using CDP
-        screenshot = None
-        try:
-            screenshot = driver.execute_cdp_cmd("Page.captureScreenshot", {
-                "format": "png",
-                "fromSurface": True,
-                "captureBeyondViewport": False
-            })
-        except Exception as e:
-            logger.error(f"CDP screenshot failed: {e}")
-            try:
-                # Fallback to regular screenshot method
-                screenshot = {"data": driver.get_screenshot_as_base64()}
-            except Exception as e:
-                logger.error(f"Regular screenshot method also failed: {e}")
-
-        if screenshot is None:
-            raise Exception("Failed to capture screenshot using both CDP and regular methods")
-
-        # Get the visible DOM content with a timeout
-        try:
-            visible_dom_content = WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script("""
-                    return (function() {
-                        var elements = document.body.getElementsByTagName('*');
-                        var visibleElements = [];
-                        for (var i = 0; i < elements.length; i++) {
-                            var rect = elements[i].getBoundingClientRect();
-                            if (rect.top < window.innerHeight && rect.bottom > 0 &&
-                                rect.left < window.innerWidth && rect.right > 0) {
-                                visibleElements.push(elements[i].outerHTML);
-                            }
-                        }
-                        return visibleElements.join('');
-                    })();
-                """)
-            )
-        except TimeoutException:
-            logger.error("Timed out while trying to get visible DOM content")
-            visible_dom_content = None
-
-        if visible_dom_content is None:
-            raise Exception("Failed to capture visible DOM content")
-
-        return screenshot['data'], visible_dom_content
-    except Exception as e:
-        logger.exception(f"Error capturing viewport data: {str(e)}")
-        return None, None
+        }), 200
     
 @app.route('/deep-look', methods=['POST'])
 @handle_alerts
