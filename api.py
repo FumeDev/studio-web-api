@@ -1233,7 +1233,7 @@ def look(driver):
             screen_width, screen_height = screenshot.size
             
             # Crop 30 pixels from top (to avoid partial window)
-            cropped_screenshot = screenshot.crop((0, 30, screen_width, screen_height))
+            cropped_screenshot = screenshot.crop((0, 50, screen_width, screen_height))
             
             # Convert PIL image to base64
             import io
@@ -1256,7 +1256,7 @@ def look(driver):
         screen_width, screen_height = screenshot.size
         
         # Crop 30 pixels from top (to avoid partial window)
-        cropped_screenshot = screenshot.crop((0, 30, screen_width, screen_height))
+        cropped_screenshot = screenshot.crop((0, 50, screen_width, screen_height))
         
         # Convert PIL image to base64
         import io
