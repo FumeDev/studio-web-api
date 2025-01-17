@@ -266,30 +266,36 @@ def clear_chrome_session(user_profile):
     """Clear Chrome session data without deleting the entire profile"""
     profile_dir = f'chrome-data/{user_profile}/Default'
     
-    # Files that store session/state data
-    session_files = [
+    # Files and directories that store session/state data
+    session_items = [
         'Current Session',
         'Current Tabs',
         'Last Session',
         'Last Tabs',
-        'Sessions',
+        'Sessions',  # This is a directory
         'Visited Links',
         'History',
         'Login Data',
         'Network Action Predictor',
         'Network Persistent State',
-        'Last URL'  # Add this file
+        'Last URL'
     ]
     
     try:
-        # Remove session files
-        for file in session_files:
-            file_path = os.path.join(profile_dir, file)
-            if os.path.exists(file_path):
+        # Remove session files/directories
+        for item in session_items:
+            item_path = os.path.join(profile_dir, item)
+            if os.path.exists(item_path):
                 try:
-                    os.remove(file_path)
+                    if os.path.isdir(item_path):
+                        # If it's a directory, remove it and its contents
+                        import shutil
+                        shutil.rmtree(item_path, ignore_errors=True)
+                    else:
+                        # If it's a file, remove it
+                        os.remove(item_path)
                 except Exception as e:
-                    print(f"Warning: Could not remove {file}: {str(e)}")
+                    print(f"Warning: Could not remove {item}: {str(e)}")
                     
         # Update preferences to start with blank page
         prefs_file = os.path.join(profile_dir, 'Preferences')
