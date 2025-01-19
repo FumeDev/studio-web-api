@@ -877,8 +877,8 @@ def go_to_url(driver):
     data = request.json
     url = data.get('url')
     debugging_port = data.get('debugging_port', 9222)
-    timeout = data.get('timeout', 300)  # Default timeout of 50 seconds
-    page_load_timeout = data.get('page_load_timeout', 300)  # Default page load timeout of 30 seconds
+    timeout = data.get('timeout', 300)
+    page_load_timeout = data.get('page_load_timeout', 300)
 
     if not url:
         return jsonify({"error": "URL not provided"}), 400
@@ -890,84 +890,83 @@ def go_to_url(driver):
     try:
         print(f"Attempting to navigate to: {url}")
         
+        # Get all tabs information
+        response = requests.get(f'http://localhost:{debugging_port}/json')
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to get tabs information"}), 500
+            
+        tabs = response.json()
+        
+        # Find the active tab (usually the one with "focused": true)
+        active_tab = None
+        for tab in tabs:
+            if tab.get('type') == 'page' and tab.get('url') == driver.current_url:
+                active_tab = tab
+                break
+                
+        if not active_tab:
+            return jsonify({"error": "Could not find active tab"}), 500
+
+        # Create a new driver instance connected to the active tab
+        chrome_options = Options()
+        chrome_options.add_experimental_option("debuggerAddress", f"localhost:{debugging_port}")
+        active_driver = webdriver.Chrome(options=chrome_options)
+        active_driver.switch_to.window(active_tab['id'])
+        
         # Set page load timeout
-        driver.set_page_load_timeout(page_load_timeout)
+        active_driver.set_page_load_timeout(page_load_timeout)
         
         # Before navigation, get any existing logs
-        existing_logs = driver.execute_script("return window._consoleLogs || [];")
+        existing_logs = active_driver.execute_script("return window._consoleLogs || [];")
         
         # Start a timer for the overall operation
         start_time = time.time()
         
         try:
-            # Execute JavaScript to navigate in the current tab
-            driver.execute_script(f"window.location.href = '{url}';")
+            # Execute JavaScript to navigate in the active tab
+            active_driver.execute_script(f"window.location.href = '{url}';")
             
             # Wait for page load with timeout
-            WebDriverWait(driver, timeout).until(
+            WebDriverWait(active_driver, timeout).until(
                 lambda d: d.execute_script('return document.readyState') == 'complete'
             )
         except TimeoutException:
             elapsed_time = time.time() - start_time
             return jsonify({
                 "error": f"Navigation timed out after {elapsed_time:.1f} seconds",
-                "partial_url": driver.current_url,
-                "partial_title": driver.title,
+                "partial_url": active_driver.current_url,
+                "partial_title": active_driver.title,
                 "status": "timeout"
             }), 504
         
         # Reinject logging script
-        driver.execute_script(get_console_logging_script())
+        active_driver.execute_script(get_console_logging_script())
         
         # Restore previous logs
         if existing_logs:
-            driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
+            active_driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
         
-        current_url = driver.current_url
-        page_title = driver.title
+        current_url = active_driver.current_url
+        page_title = active_driver.title
         
         print(f"Current URL: {current_url}")
         print(f"Page title: {page_title}")
         
-        js_errors = driver.execute_script("return window.JSErrors || []")
+        js_errors = active_driver.execute_script("return window.JSErrors || []")
         if js_errors:
             print("JavaScript errors encountered:", js_errors)
-        
-        # Reinject the console logging script
-        driver.execute_script(get_console_logging_script())
+
+        # Clean up the active driver
+        active_driver.quit()
 
         return jsonify({
             "message": "Navigation completed successfully",
             "current_url": current_url,
             "page_title": page_title,
-            "fully_loaded": driver.execute_script('return document.readyState') == 'complete',
+            "fully_loaded": True,
             "js_errors": js_errors,
             "elapsed_time": time.time() - start_time
         }), 200
-
-    except WebDriverException as e:
-        error_msg = str(e)
-        stack_trace = traceback.format_exc()
-        print(f"WebDriver error: {error_msg}")
-        print(f"Stack trace: {stack_trace}")
-        
-        # Attempt to get additional information
-        try:
-            current_url = driver.current_url
-            page_source = driver.page_source
-            screenshot = driver.get_screenshot_as_base64()
-        except Exception as inner_e:
-            print(f"Error getting additional information: {str(inner_e)}")
-            current_url = page_source = screenshot = None
-
-        return jsonify({
-            "error": f"WebDriver error: {error_msg}",
-            "stack_trace": stack_trace,
-            "current_url": current_url,
-            "page_source": page_source,
-            "screenshot": screenshot,
-            "status": "error"
-        }), 500
 
     except Exception as e:
         error_msg = str(e)
