@@ -897,12 +897,19 @@ def go_to_url(driver):
             
         tabs = response.json()
         
-        # Find the active tab (usually the one with "focused": true)
+        # Find the active tab by looking for focused:true or the most recently active tab
         active_tab = None
         for tab in tabs:
-            if tab.get('type') == 'page' and tab.get('url') == driver.current_url:
+            if tab.get('type') == 'page' and tab.get('focused', False):
                 active_tab = tab
                 break
+        
+        # If no focused tab found, try to get the most recently active one
+        if not active_tab:
+            for tab in tabs:
+                if tab.get('type') == 'page':
+                    active_tab = tab
+                    break
                 
         if not active_tab:
             return jsonify({"error": "Could not find active tab"}), 500
@@ -915,12 +922,6 @@ def go_to_url(driver):
         
         # Set page load timeout
         active_driver.set_page_load_timeout(page_load_timeout)
-        
-        # Before navigation, get any existing logs
-        existing_logs = active_driver.execute_script("return window._consoleLogs || [];")
-        
-        # Start a timer for the overall operation
-        start_time = time.time()
         
         try:
             # Execute JavaScript to navigate in the active tab
@@ -938,23 +939,12 @@ def go_to_url(driver):
                 "partial_title": active_driver.title,
                 "status": "timeout"
             }), 504
-        
-        # Reinject logging script
-        active_driver.execute_script(get_console_logging_script())
-        
-        # Restore previous logs
-        if existing_logs:
-            active_driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
-        
+
         current_url = active_driver.current_url
         page_title = active_driver.title
         
         print(f"Current URL: {current_url}")
         print(f"Page title: {page_title}")
-        
-        js_errors = active_driver.execute_script("return window.JSErrors || []")
-        if js_errors:
-            print("JavaScript errors encountered:", js_errors)
 
         # Clean up the active driver
         active_driver.quit()
@@ -964,7 +954,6 @@ def go_to_url(driver):
             "current_url": current_url,
             "page_title": page_title,
             "fully_loaded": True,
-            "js_errors": js_errors,
             "elapsed_time": time.time() - start_time
         }), 200
 
