@@ -888,6 +888,9 @@ def go_to_url(driver):
         url = f'https://{url}'
 
     try:
+        # Start a timer for the overall operation
+        start_time = time.time()
+        
         print(f"Attempting to navigate to: {url}")
         
         # Get all tabs information
