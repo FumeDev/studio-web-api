@@ -893,12 +893,6 @@ def go_to_url(driver):
         # Set page load timeout
         driver.set_page_load_timeout(page_load_timeout)
         
-        # Get current window handle (active tab)
-        current_window = driver.current_window_handle
-        
-        # Switch to the current window to ensure we're in the active tab
-        driver.switch_to.window(current_window)
-        
         # Before navigation, get any existing logs
         existing_logs = driver.execute_script("return window._consoleLogs || [];")
         
