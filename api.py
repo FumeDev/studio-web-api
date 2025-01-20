@@ -358,13 +358,16 @@ def close_chrome_gracefully(debugging_port=9222):
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
+    refresh_enabled = data.get('refresh_enabled', False)
 
     try:
-        # Try graceful close first
-        if not close_chrome_gracefully(debugging_port):
-            # Fall back to force kill if graceful close fails
-            kill_chrome_processes()
-        time.sleep(1)  # Wait for processes to terminate
+        if refresh_enabled:
+            # Try graceful close first
+            if not close_chrome_gracefully(debugging_port):
+                # Fall back to force kill if graceful close fails
+                kill_chrome_processes()
+
+            time.sleep(1)  # Wait for processes to terminate
         
         chrome_path = data.get('chrome_path', '')
         display = data.get('display', ':1')
@@ -625,13 +628,6 @@ def start_browser():
 
     except Exception as e:
         print(f"Warning during Chrome cleanup: {str(e)}")
-
-def is_chrome_running(port):
-    try:
-        response = requests.get(f'http://localhost:{port}/json/version')
-        return response.status_code == 200
-    except requests.exceptions.ConnectionError:
-        return False
 
 def connect_to_chrome(debugging_port=9222):
     chrome_options = Options()
