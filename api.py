@@ -266,30 +266,36 @@ def clear_chrome_session(user_profile):
     """Clear Chrome session data without deleting the entire profile"""
     profile_dir = f'chrome-data/{user_profile}/Default'
     
-    # Files that store session/state data
-    session_files = [
+    # Files and directories that store session/state data
+    session_items = [
         'Current Session',
         'Current Tabs',
         'Last Session',
         'Last Tabs',
-        'Sessions',
+        'Sessions',  # This is a directory
         'Visited Links',
         'History',
         'Login Data',
         'Network Action Predictor',
         'Network Persistent State',
-        'Last URL'  # Add this file
+        'Last URL'
     ]
     
     try:
-        # Remove session files
-        for file in session_files:
-            file_path = os.path.join(profile_dir, file)
-            if os.path.exists(file_path):
+        # Remove session files/directories
+        for item in session_items:
+            item_path = os.path.join(profile_dir, item)
+            if os.path.exists(item_path):
                 try:
-                    os.remove(file_path)
+                    if os.path.isdir(item_path):
+                        # If it's a directory, remove it and its contents
+                        import shutil
+                        shutil.rmtree(item_path, ignore_errors=True)
+                    else:
+                        # If it's a file, remove it
+                        os.remove(item_path)
                 except Exception as e:
-                    print(f"Warning: Could not remove {file}: {str(e)}")
+                    print(f"Warning: Could not remove {item}: {str(e)}")
                     
         # Update preferences to start with blank page
         prefs_file = os.path.join(profile_dir, 'Preferences')
@@ -352,13 +358,16 @@ def close_chrome_gracefully(debugging_port=9222):
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
+    refresh_enabled = data.get('refresh_enabled', False)
 
     try:
-        # Try graceful close first
-        if not close_chrome_gracefully(debugging_port):
-            # Fall back to force kill if graceful close fails
-            kill_chrome_processes()
-        time.sleep(1)  # Wait for processes to terminate
+        if refresh_enabled:
+            # Try graceful close first
+            if not close_chrome_gracefully(debugging_port):
+                # Fall back to force kill if graceful close fails
+                kill_chrome_processes()
+
+            time.sleep(1)  # Wait for processes to terminate
         
         chrome_path = data.get('chrome_path', '')
         display = data.get('display', ':1')
@@ -653,6 +662,7 @@ def click_element(driver):
     y_coord = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
+    SCREENSHOT_TOP_CROP = 50  # Define constant for element detection only
 
     if not xpath and (x_coord is None or y_coord is None):
         return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
@@ -670,16 +680,6 @@ def click_element(driver):
             pyautogui.PAUSE = 0.1
             pyautogui.FAILSAFE = True
 
-            # Focus the Chrome window first
-            window_rect = driver.get_window_rect()
-            try:
-                if platform.system() == 'Linux':
-                    window_id = subprocess.check_output(["xdotool", "search", "--sync", "--onlyvisible", "--class", "chrome"]).decode().strip().split('\n')[0]
-                    subprocess.check_call(["xdotool", "windowactivate", window_id])
-                time.sleep(0.2)
-            except Exception as e:
-                print(f"Warning: Could not focus window: {str(e)}")
-
             if xpath:
                 # XPath-based clicking logic
                 element = WebDriverWait(driver, wait_time).until(
@@ -691,55 +691,40 @@ def click_element(driver):
                 )
                 
                 # Get element's position relative to viewport
-                element_rect = element.rect  # This gets both position and size
-                content_offset = get_browser_content_offset(driver)
+                element_rect = element.rect
                 
                 # Calculate center point of the element
                 center_x = element_rect['x'] + (element_rect['width'] / 2)
                 center_y = element_rect['y'] + (element_rect['height'] / 2)
                 
-                # Calculate absolute screen coordinates
-                abs_x = int(window_rect['x'] + content_offset['left'] + center_x)
-                abs_y = int(window_rect['y'] + content_offset['top'] + center_y)
+                # Get the window position
+                window_rect = driver.get_window_rect()
+                
+                # Calculate absolute screen coordinates (no offset for clicking)
+                abs_x = window_rect['x'] + center_x
+                abs_y = window_rect['y'] + center_y
                 
                 # Move mouse and perform click with retry
                 pyautogui.moveTo(abs_x, abs_y, duration=0.2)
                 time.sleep(0.1)
                 pyautogui.click()
                 
-                if element.tag_name.lower() == 'input':
-                    try:
-                        element.is_selected()
-                        break
-                    except:
-                        if attempt == max_retries - 1:
-                            raise
-                        time.sleep(0.2)
-                else:
-                    break
-                
                 result = "Click performed at element location"
                 
             else:
-                # Coordinate-based clicking logic
-                viewport_offset = driver.execute_script("""
-                    return {
-                        top: window.outerHeight - window.innerHeight + 
-                             (window.screenY || window.screenTop || 0),
-                        left: (window.screenX || window.screenLeft || 0),
-                        scrollX: window.scrollX || window.pageXOffset,
-                        scrollY: window.scrollY || window.pageYOffset
-                    };
-                """)
+                # Get window position
+                window_rect = driver.get_window_rect()
                 
-                # Calculate absolute screen coordinates accounting for all offsets
-                abs_x = int(window_rect['x'] + x_coord)
-                abs_y = int(window_rect['y'] + viewport_offset['top'] + y_coord)
+                # Calculate absolute screen coordinates (no offset for clicking)
+                abs_x = window_rect['x'] + x_coord
+                abs_y = window_rect['y'] + y_coord
                 
-                # Get element info before clicking
+                # Get element info before clicking (adjust Y for element detection)
                 element_info = driver.execute_script("""
                     function getElementFromPoint(x, y) {
-                        const element = document.elementFromPoint(x, y);
+                        // Adjust y-coordinate for element detection to match screenshot
+                        const adjustedY = y - arguments[2];  // Subtract crop offset
+                        const element = document.elementFromPoint(x, adjustedY);
                         if (element) {
                             return {
                                 html: element.outerHTML,
@@ -754,8 +739,8 @@ def click_element(driver):
                         }
                         return null;
                     }
-                    return getElementFromPoint(arguments[0], arguments[1]);
-                """, x_coord, y_coord)
+                    return getElementFromPoint(arguments[0], arguments[1], arguments[2]);
+                """, x_coord, y_coord, SCREENSHOT_TOP_CROP)
                 
                 # Move mouse and perform click with retry
                 pyautogui.moveTo(abs_x, abs_y, duration=0.2)
@@ -766,12 +751,9 @@ def click_element(driver):
                     "message": "Click performed at coordinates",
                     "intended_coordinates": {"x": x_coord, "y": y_coord},
                     "actual_coordinates": {"x": abs_x, "y": abs_y},
-                    "viewport_offset": viewport_offset,
-                    "window_info": window_rect,
                     "clicked_element": element_info
                 }
 
-            # If we get here, the click was successful
             return jsonify(result), 200
 
         except Exception as e:
@@ -780,7 +762,6 @@ def click_element(driver):
             print(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {retry_delay} seconds...")
             time.sleep(retry_delay)
 
-    # This should never be reached due to the raise in the loop
     return jsonify({"error": "All retry attempts failed"}), 500
 
 @app.route('/double_click_element', methods=['POST'])
@@ -792,6 +773,7 @@ def double_click_element(driver):
     y_coord = data.get('y')
     debugging_port = data.get('debugging_port', 9222)
     wait_time = data.get('wait_time', 10)
+    SCREENSHOT_TOP_CROP = 50  # Define constant for element detection only
 
     if not xpath and (x_coord is None or y_coord is None):
         return jsonify({"error": "Either XPath or both X and Y coordinates must be provided"}), 400
@@ -811,12 +793,9 @@ def double_click_element(driver):
             element_location = element.location
             window_rect = driver.get_window_rect()
             
-            # Calculate the browser's content offset
-            content_offset = get_browser_content_offset(driver)
-            
-            # Calculate absolute screen coordinates for the element
-            abs_x = window_rect['x'] + content_offset['left'] + element_location['x']
-            abs_y = window_rect['y'] + content_offset['top'] + element_location['y']
+            # Calculate absolute screen coordinates (no offset for clicking)
+            abs_x = window_rect['x'] + element_location['x']
+            abs_y = window_rect['y'] + element_location['y']
             
             # Move mouse and double click
             pyautogui.moveTo(abs_x, abs_y)
@@ -825,27 +804,19 @@ def double_click_element(driver):
             result = "Double click performed at element location"
             
         else:
-            # Get window position and size information
+            # Get window position
             window_rect = driver.get_window_rect()
             
-            # Get the browser's viewport offset
-            viewport_offset = driver.execute_script("""
-                return {
-                    top: window.outerHeight - window.innerHeight,
-                    left: window.outerWidth - window.innerWidth,
-                    scrollX: window.scrollX || window.pageXOffset,
-                    scrollY: window.scrollY || window.pageYOffset
-                };
-            """)
-            
-            # Calculate absolute screen coordinates accounting for viewport offset
+            # Calculate absolute screen coordinates (no offset for clicking)
             abs_x = window_rect['x'] + x_coord
-            abs_y = window_rect['y'] + y_coord + viewport_offset['top']
+            abs_y = window_rect['y'] + y_coord
             
-            # Get element at coordinates before clicking (for debugging)
+            # Get element info before clicking (adjust Y for element detection)
             element_info = driver.execute_script("""
                 function getElementFromPoint(x, y) {
-                    const element = document.elementFromPoint(x, y);
+                    // Adjust y-coordinate for element detection to match screenshot
+                    const adjustedY = y - arguments[2];  // Subtract crop offset
+                    const element = document.elementFromPoint(x, adjustedY);
                     if (element) {
                         return {
                             html: element.outerHTML,
@@ -860,8 +831,8 @@ def double_click_element(driver):
                     }
                     return null;
                 }
-                return getElementFromPoint(arguments[0], arguments[1]);
-            """, x_coord, y_coord)
+                return getElementFromPoint(arguments[0], arguments[1], arguments[2]);
+            """, x_coord, y_coord, SCREENSHOT_TOP_CROP)
             
             # Move mouse and double click
             pyautogui.moveTo(abs_x, abs_y)
@@ -871,8 +842,6 @@ def double_click_element(driver):
                 "message": "Double click performed at coordinates",
                 "intended_coordinates": {"x": x_coord, "y": y_coord},
                 "actual_coordinates": {"x": abs_x, "y": abs_y},
-                "viewport_offset": viewport_offset,
-                "window_info": window_rect,
                 "clicked_element": element_info
             }
 
@@ -904,8 +873,8 @@ def go_to_url(driver):
     data = request.json
     url = data.get('url')
     debugging_port = data.get('debugging_port', 9222)
-    timeout = data.get('timeout', 300)  # Default timeout of 50 seconds
-    page_load_timeout = data.get('page_load_timeout', 300)  # Default page load timeout of 30 seconds
+    timeout = data.get('timeout', 300)
+    page_load_timeout = data.get('page_load_timeout', 300)
 
     if not url:
         return jsonify({"error": "URL not provided"}), 400
@@ -915,86 +884,77 @@ def go_to_url(driver):
         url = f'https://{url}'
 
     try:
-        print(f"Attempting to navigate to: {url}")
-        
-        # Set page load timeout
-        driver.set_page_load_timeout(page_load_timeout)
-        
-        # Before navigation, get any existing logs
-        existing_logs = driver.execute_script("return window._consoleLogs || [];")
-        
         # Start a timer for the overall operation
         start_time = time.time()
         
+        print(f"Attempting to navigate to: {url}")
+        
+        # Get all tabs information
+        response = requests.get(f'http://localhost:{debugging_port}/json')
+        if response.status_code != 200:
+            return jsonify({"error": "Failed to get tabs information"}), 500
+            
+        tabs = response.json()
+        
+        # Find the active tab by looking for focused:true or the most recently active tab
+        active_tab = None
+        for tab in tabs:
+            if tab.get('type') == 'page' and tab.get('focused', False):
+                active_tab = tab
+                break
+        
+        # If no focused tab found, try to get the most recently active one
+        if not active_tab:
+            for tab in tabs:
+                if tab.get('type') == 'page':
+                    active_tab = tab
+                    break
+                
+        if not active_tab:
+            return jsonify({"error": "Could not find active tab"}), 500
+
+        # Create a new driver instance connected to the active tab
+        chrome_options = Options()
+        chrome_options.add_experimental_option("debuggerAddress", f"localhost:{debugging_port}")
+        active_driver = webdriver.Chrome(options=chrome_options)
+        active_driver.switch_to.window(active_tab['id'])
+        
+        # Set page load timeout
+        active_driver.set_page_load_timeout(page_load_timeout)
+        
         try:
-            # Perform navigation with timeout
-            driver.get(url)
+            # Execute JavaScript to navigate in the active tab
+            active_driver.execute_script(f"window.location.href = '{url}';")
             
             # Wait for page load with timeout
-            WebDriverWait(driver, timeout).until(
+            WebDriverWait(active_driver, timeout).until(
                 lambda d: d.execute_script('return document.readyState') == 'complete'
             )
         except TimeoutException:
             elapsed_time = time.time() - start_time
             return jsonify({
                 "error": f"Navigation timed out after {elapsed_time:.1f} seconds",
-                "partial_url": driver.current_url,
-                "partial_title": driver.title,
+                "partial_url": active_driver.current_url,
+                "partial_title": active_driver.title,
                 "status": "timeout"
             }), 504
-        
-        # Reinject logging script
-        driver.execute_script(get_console_logging_script())
-        
-        # Restore previous logs
-        if existing_logs:
-            driver.execute_script("window._consoleLogs = arguments[0];", existing_logs)
-        
-        current_url = driver.current_url
-        page_title = driver.title
+
+        current_url = active_driver.current_url
+        page_title = active_driver.title
         
         print(f"Current URL: {current_url}")
         print(f"Page title: {page_title}")
-        
-        js_errors = driver.execute_script("return window.JSErrors || []")
-        if js_errors:
-            print("JavaScript errors encountered:", js_errors)
-        
-        # Reinject the console logging script
-        driver.execute_script(get_console_logging_script())
+
+        # Clean up the active driver
+        active_driver.quit()
 
         return jsonify({
             "message": "Navigation completed successfully",
             "current_url": current_url,
             "page_title": page_title,
-            "fully_loaded": driver.execute_script('return document.readyState') == 'complete',
-            "js_errors": js_errors,
+            "fully_loaded": True,
             "elapsed_time": time.time() - start_time
         }), 200
-
-    except WebDriverException as e:
-        error_msg = str(e)
-        stack_trace = traceback.format_exc()
-        print(f"WebDriver error: {error_msg}")
-        print(f"Stack trace: {stack_trace}")
-        
-        # Attempt to get additional information
-        try:
-            current_url = driver.current_url
-            page_source = driver.page_source
-            screenshot = driver.get_screenshot_as_base64()
-        except Exception as inner_e:
-            print(f"Error getting additional information: {str(inner_e)}")
-            current_url = page_source = screenshot = None
-
-        return jsonify({
-            "error": f"WebDriver error: {error_msg}",
-            "stack_trace": stack_trace,
-            "current_url": current_url,
-            "page_source": page_source,
-            "screenshot": screenshot,
-            "status": "error"
-        }), 500
 
     except Exception as e:
         error_msg = str(e)
@@ -1216,43 +1176,54 @@ def look(driver):
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
         except TimeoutException:
-            # If timeout occurs, capture what's available on the page
-            error_content = driver.page_source
-            error_screenshot = driver.get_screenshot_as_base64()
+            # If timeout occurs, capture what's available
+            window_rect = driver.get_window_rect()
+            
+            # Take full screenshot
+            screenshot = pyautogui.screenshot()
+            
+            # Get screen size
+            screen_width, screen_height = screenshot.size
+            
+            # Crop 30 pixels from top (to avoid partial window)
+            cropped_screenshot = screenshot.crop((0, 50, screen_width, screen_height))
+            
+            # Convert PIL image to base64
+            import io
+            import base64
+            buffered = io.BytesIO()
+            cropped_screenshot.save(buffered, format="PNG")
+            screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
+            
             return jsonify({
                 "error": "Timed out waiting for page to load",
-                "error_content": error_content,
-                "error_screenshot": error_screenshot,
+                "screenshot": screenshot_base64,
                 "current_url": driver.current_url,
                 "page_title": driver.title
-            }), 200  # Return 200 to allow further processing of the error
+            }), 200
 
-        # Attempt to capture viewport data with error handling
-        screenshot, dom_content = safe_capture_viewport_data(driver)
+        # Take full screenshot
+        screenshot = pyautogui.screenshot()
+        
+        # Get screen size
+        screen_width, screen_height = screenshot.size
+        
+        # Crop 30 pixels from top (to avoid partial window)
+        cropped_screenshot = screenshot.crop((0, 50, screen_width, screen_height))
+        
+        # Convert PIL image to base64
+        import io
+        import base64
+        buffered = io.BytesIO()
+        cropped_screenshot.save(buffered, format="PNG")
+        screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
 
-        if dom_content is None:
-            # If DOM content capture fails, return what we can
-            error_content = driver.page_source
-            return jsonify({
-                "error": "Failed to capture DOM content",
-                "error_content": error_content,
-                "screenshot": screenshot if screenshot else driver.get_screenshot_as_base64(),
-                "current_url": driver.current_url,
-                "page_title": driver.title
-            }), 200  # Return 200 to allow further processing of the error
+        # Get DOM content
+        dom_content = driver.execute_script("return document.documentElement.outerHTML;")
 
-        if screenshot is None:
-            # If screenshot capture fails, return what we can
-            return jsonify({
-                "error": "Failed to capture screenshot",
-                "dom_content": dom_content,
-                "current_url": driver.current_url,
-                "page_title": driver.title
-            }), 200  # Return 200 to allow further processing of the error
-
-        # Modified generate_response to include URL and title
+        # Return the response
         response_data = {
-            "screenshot": screenshot,
+            "screenshot": screenshot_base64,
             "dom_content": dom_content,
             "current_url": driver.current_url,
             "page_title": driver.title
@@ -1260,83 +1231,29 @@ def look(driver):
         return jsonify(response_data)
     except Exception as e:
         # Capture any unexpected errors
-        error_content = driver.page_source
-        error_screenshot = driver.get_screenshot_as_base64()
+        try:
+            # Take full screenshot
+            screenshot = pyautogui.screenshot()
+            
+            # Get screen size
+            screen_width, screen_height = screenshot.size
+            
+            # Crop 30 pixels from top
+            cropped_screenshot = screenshot.crop((0, 50, screen_width, screen_height))
+            
+            # Convert to base64
+            buffered = io.BytesIO()
+            cropped_screenshot.save(buffered, format="PNG")
+            error_screenshot_base64 = base64.b64encode(buffered.getvalue()).decode()
+        except:
+            error_screenshot_base64 = None
+
         return jsonify({
             "error": f"Unexpected error: {str(e)}",
-            "error_content": error_content,
-            "error_screenshot": error_screenshot,
+            "error_screenshot": error_screenshot_base64,
             "current_url": driver.current_url,
             "page_title": driver.title
-        }), 200  # Return 200 to allow further processing of the error
-
-def safe_capture_viewport_data(driver):
-    import logging
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    try:
-        # Get the document.readyState
-        ready_state = driver.execute_script("return document.readyState")
-        
-        # If the page is not complete, wait a bit more
-        if ready_state != "complete":
-            try:
-                WebDriverWait(driver, 10).until(
-                    lambda d: d.execute_script("return document.readyState") == "complete"
-                )
-            except TimeoutException:
-                logger.warning("Timed out waiting for page to be complete. Proceeding anyway.")
-
-        # Attempt to capture screenshot using CDP
-        screenshot = None
-        try:
-            screenshot = driver.execute_cdp_cmd("Page.captureScreenshot", {
-                "format": "png",
-                "fromSurface": True,
-                "captureBeyondViewport": False
-            })
-        except Exception as e:
-            logger.error(f"CDP screenshot failed: {e}")
-            try:
-                # Fallback to regular screenshot method
-                screenshot = {"data": driver.get_screenshot_as_base64()}
-            except Exception as e:
-                logger.error(f"Regular screenshot method also failed: {e}")
-
-        if screenshot is None:
-            raise Exception("Failed to capture screenshot using both CDP and regular methods")
-
-        # Get the visible DOM content with a timeout
-        try:
-            visible_dom_content = WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script("""
-                    return (function() {
-                        var elements = document.body.getElementsByTagName('*');
-                        var visibleElements = [];
-                        for (var i = 0; i < elements.length; i++) {
-                            var rect = elements[i].getBoundingClientRect();
-                            if (rect.top < window.innerHeight && rect.bottom > 0 &&
-                                rect.left < window.innerWidth && rect.right > 0) {
-                                visibleElements.push(elements[i].outerHTML);
-                            }
-                        }
-                        return visibleElements.join('');
-                    })();
-                """)
-            )
-        except TimeoutException:
-            logger.error("Timed out while trying to get visible DOM content")
-            visible_dom_content = None
-
-        if visible_dom_content is None:
-            raise Exception("Failed to capture visible DOM content")
-
-        return screenshot['data'], visible_dom_content
-    except Exception as e:
-        logger.exception(f"Error capturing viewport data: {str(e)}")
-        return None, None
+        }), 200
     
 @app.route('/deep-look', methods=['POST'])
 @handle_alerts
