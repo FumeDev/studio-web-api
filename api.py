@@ -1057,18 +1057,19 @@ def inspect_element(driver):
 @handle_alerts
 def scroll_page(driver):
     data = request.json
-    scroll_type = data.get('scroll_type', 'pixels')  # 'pixels' or 'element'
+    scroll_type = data.get('scroll_type', 'pixels')  # 'pixels', 'element', or 'coordinates'
     value = data.get('value')  # pixels to scroll or xpath of element
+    x = data.get('x')  # x coordinate for scrolling within component
+    y = data.get('y')  # y coordinate for scrolling within component
+    scroll_y = data.get('scroll_y', 0)  # vertical scroll amount
     debugging_port = data.get('debugging_port', 9222)
-
-    if not value:
-        return jsonify({"error": "Scroll value or element xpath must be provided"}), 400
 
     try:   
         if scroll_type == 'pixels':
             # Scroll by pixel amount
-            driver.execute_script(f"window.scrollBy(0, {value});")
-            message = f"Scrolled by {value} pixels"
+            driver.execute_script(f"window.scrollBy(0, {scroll_y});")
+            message = f"Scrolled by {scroll_y} pixels"
+            
         elif scroll_type == 'element':
             # Scroll to element
             element = WebDriverWait(driver, 10).until(
@@ -1076,11 +1077,34 @@ def scroll_page(driver):
             )
             driver.execute_script("arguments[0].scrollIntoView(true);", element)
             message = f"Scrolled to element with xpath: {value}"
+            
+        elif scroll_type == 'coordinates':
+            # Get element at coordinates and scroll within it
+            script = """
+                const element = document.elementFromPoint(arguments[0], arguments[1]);
+                if (element) {
+                    element.scrollBy(0, arguments[2]);
+                    return {
+                        scrolled: true,
+                        elementTag: element.tagName,
+                        elementId: element.id,
+                        scrollTop: element.scrollTop
+                    };
+                }
+                return { scrolled: false };
+            """
+            result = driver.execute_script(script, x, y, scroll_y)
+            
+            if result['scrolled']:
+                message = f"Scrolled element at ({x}, {y}) by {scroll_y} pixels"
+            else:
+                return jsonify({"error": "No scrollable element found at coordinates"}), 400
+                
         else:
-            return jsonify({"error": "Invalid scroll_type. Use 'pixels' or 'element'."}), 400
+            return jsonify({"error": "Invalid scroll_type. Use 'pixels', 'element', or 'coordinates'."}), 400
 
         # Get current scroll position
-        scroll_position = driver.execute_script("return window.pageYOffset;")
+        scroll_position = driver.execute_script("return {y: window.pageYOffset};")
         
         return jsonify({
             "message": message,
