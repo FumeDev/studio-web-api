@@ -222,26 +222,35 @@ def dismiss_alerts(driver, timeout=1):
 def handle_alerts(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        max_attempts = 3
-        for attempt in range(max_attempts):
+        debugging_port = kwargs.get('debugging_port', 9222)
+        
+        for attempt in range(3):
             try:
-                debugging_port = kwargs.get('debugging_port', 9222)
-                driver = connect_to_chrome(debugging_port)
+                # Re-establish a fresh connection each attempt:
+                driver = resilient_connect(debugging_port)
                 
-                # Dismiss any initial alerts
+                # Dismiss alerts if any
                 dismiss_alerts(driver, timeout=2)
 
-                # Call the original function
+                # Now run the main function
                 result = func(driver, *args, **kwargs)
 
-                # Dismiss any alerts that may have appeared during function execution
+                # Dismiss any alerts created by that function
                 dismiss_alerts(driver, timeout=2)
 
+                # Clean up the driver to avoid stale references
+                try:
+                    driver.quit()
+                except:
+                    pass
+
                 return result
+
             except Exception as e:
-                if attempt == max_attempts - 1:
+                # Log the error. If final attempt, raise
+                print(f"Attempt {attempt + 1} failed: {str(e)}")
+                if attempt == 2:  # 3rd attempt
                     raise
-                print(f"Attempt {attempt + 1} failed: {str(e)}. Retrying...")
                 time.sleep(1)
     return wrapper
 
@@ -361,6 +370,22 @@ def start_browser():
     refresh_enabled = data.get('refresh_enabled', False)
 
     try:
+        # First check if Chrome is already running
+        try:
+            driver = resilient_connect(debugging_port)
+            if not refresh_enabled:
+                # If Chrome is running and refresh not requested, return current state
+                return jsonify({
+                    "message": "Chrome already running",
+                    "url": driver.current_url,
+                    "title": driver.title
+                }), 200
+            # Clean up the driver before refresh
+            driver.quit()
+        except Exception:
+            # Chrome not running or not accessible
+            pass
+
         if refresh_enabled:
             # Try graceful close first
             if not close_chrome_gracefully(debugging_port):
@@ -597,61 +622,93 @@ def start_browser():
             with open(prefs_file, 'w') as f:
                 json.dump(prefs, f)
 
+            # Start Chrome process
             subprocess.Popen(chrome_command, env=os.environ)
 
-            # Wait for Chrome to start
-            time.sleep(2)
-            
-            # Connect to Chrome and inject the scripts
-            try:
-                driver = connect_to_chrome(debugging_port)
-                driver.execute_script(remove_automation_flags_script)
-                driver.execute_script(get_console_logging_script())
-            except Exception as e:
-                print(f"Warning: Failed to inject scripts: {str(e)}")
-
-            # Get Chrome info and return response
-            chrome_info = get_chrome_info(debugging_port)
-            if chrome_info["running"]:
-                return jsonify({
-                    "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'",
-                    "url": chrome_info["url"],
-                    "title": chrome_info["title"]
-                }), 200
-            else:
-                return jsonify({
-                    "message": f"Chrome started on debugging port {debugging_port} with DISPLAY={display} and user profile '{user_profile}'"
-                }), 200
+            # Wait for Chrome to start and try to connect
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    time.sleep(2)  # Wait between attempts
+                    driver = resilient_connect(debugging_port)
+                    
+                    # Inject scripts
+                    driver.execute_script(remove_automation_flags_script)
+                    driver.execute_script(get_console_logging_script())
+                    
+                    # Get current state
+                    current_url = driver.current_url
+                    page_title = driver.title
+                    
+                    # Clean up driver
+                    driver.quit()
+                    
+                    return jsonify({
+                        "message": f"Chrome started successfully on port {debugging_port}",
+                        "url": current_url,
+                        "title": page_title
+                    }), 200
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise Exception(f"Failed to connect to Chrome after {max_retries} attempts: {str(e)}")
+                    continue
 
         except Exception as e:
             return jsonify({"error": f"Failed to start Chrome: {str(e)}"}), 500
 
     except Exception as e:
-        print(f"Warning during Chrome cleanup: {str(e)}")
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
 def connect_to_chrome(debugging_port=9222):
+    """Attach to an already-running Chrome via remote debugging."""
     chrome_options = Options()
     chrome_options.add_experimental_option("debuggerAddress", f"localhost:{debugging_port}")
     driver = webdriver.Chrome(options=chrome_options)
     return driver
 
-def establish_stable_connection(debugging_port=9222, max_retries=3):
-    """Establish a stable connection to Chrome with retries"""
+def attach_to_active_tab(driver, debugging_port=9222):
+    """Switch Selenium to an open tab if the old one closed."""
+    tabs = requests.get(f'http://localhost:{debugging_port}/json').json()
+    # find the first page
+    page_id = None
+    for t in tabs:
+        if t.get('type') == 'page':
+            page_id = t['id']
+            break
+    if page_id is None:
+        # maybe open a new tab:
+        driver.execute_script("window.open('about:blank', '_blank');")
+        time.sleep(0.5)
+        tabs = requests.get(f'http://localhost:{debugging_port}/json').json()
+        # re-find new tab ...
+        for t in tabs:
+            if t.get('type') == 'page':
+                page_id = t['id']
+                break
+    # if still none, raise
+    if not page_id:
+        raise Exception("No open tabs to attach to")
+
+    driver.switch_to.window(page_id)
+    return driver
+
+def resilient_connect(debugging_port=9222, max_retries=3):
+    """
+    Attempt to connect to a running Chrome up to max_retries times.
+    If it fails due to stale context, attempt a re-start or re-attach.
+    """
     for attempt in range(max_retries):
         try:
-            chrome_options = Options()
-            chrome_options.add_experimental_option("debuggerAddress", f"localhost:{debugging_port}")
-            driver = webdriver.Chrome(options=chrome_options)
-            
-            # Test the connection by executing a simple command
-            driver.execute_script("return document.readyState")
+            driver = connect_to_chrome(debugging_port)
+            attach_to_active_tab(driver, debugging_port)
+            # quick test
+            _ = driver.execute_script("return document.title")
             return driver
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
-            time.sleep(1)  # Wait before retry
-            
-    raise Exception("Failed to establish stable connection")
+            time.sleep(1)
+    raise Exception("Failed to establish a stable connection to Chrome.")
 
 @app.route('/click_element', methods=['POST'])
 @handle_alerts
@@ -674,7 +731,7 @@ def click_element(driver):
         try:
             # Re-establish connection on each retry
             if attempt > 0:
-                driver = establish_stable_connection(debugging_port)
+                driver = resilient_connect(debugging_port)
 
             # Configure PyAutoGUI settings
             pyautogui.PAUSE = 0.1
