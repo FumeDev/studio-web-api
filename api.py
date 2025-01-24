@@ -1037,26 +1037,23 @@ def type_input(driver):
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
-        # Check if there's an active text input element
-        active_element = driver.execute_script("""
-            const active = document.activeElement;
-            if (active) {
-                return {
-                    tag: active.tagName.toLowerCase(),
-                    type: active.type,
-                    isEditable: active.isContentEditable || 
-                              ['input', 'textarea'].includes(active.tagName.toLowerCase()) ||
-                              (active.tagName.toLowerCase() === 'input' && 
-                               ['text', 'password', 'email', 'number', 'search', 'tel', 'url'].includes(active.type))
-                };
-            }
-            return null;
-        """)
+        # Check for active element using Selenium's capabilities
+        active_element = driver.switch_to.active_element
+        tag_name = active_element.tag_name.lower()
+        element_type = active_element.get_attribute('type')
+        is_editable = (
+            active_element.get_attribute('contenteditable') == 'true' or
+            tag_name in ['input', 'textarea'] or
+            (tag_name == 'input' and element_type in ['text', 'password', 'email', 'number', 'search', 'tel', 'url'])
+        )
 
-        if not active_element or not active_element.get('isEditable'):
+        if not is_editable:
             return jsonify({
                 "error": "No active text input element found",
-                "active_element": active_element
+                "active_element": {
+                    "tag": tag_name,
+                    "type": element_type
+                }
             }), 400
 
         # Configure PyAutoGUI settings
@@ -1117,7 +1114,11 @@ def type_input(driver):
             "message": "Keys sent successfully",
             "text": input_text if input_text else special_key,
             "cleared_first": clear_first,
-            "active_element": active_element
+            "active_element": {
+                "tag": tag_name,
+                "type": element_type,
+                "is_editable": is_editable
+            }
         }), 200
 
     except Exception as e:
