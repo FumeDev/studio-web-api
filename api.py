@@ -1128,40 +1128,77 @@ def scroll_page(driver):
             message = f"Scrolled by {scroll_y} pixels"
             
         elif scroll_type == 'element':
+            if not value:
+                return jsonify({"error": "XPath value is required for element scrolling"}), 400
             # Scroll to element
-            element = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, value))
-            )
-            driver.execute_script("arguments[0].scrollIntoView(true);", element)
-            message = f"Scrolled to element with xpath: {value}"
+            try:
+                element = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, value))
+                )
+                driver.execute_script("arguments[0].scrollIntoView(true);", element)
+                message = f"Scrolled to element with xpath: {value}"
+            except TimeoutException:
+                return jsonify({"error": "Element not found within timeout period"}), 404
             
         elif scroll_type == 'coordinates':
+            if x is None or y is None:
+                return jsonify({"error": "Both x and y coordinates are required for coordinate scrolling"}), 400
             # Get element at coordinates and scroll within it
             script = """
                 const element = document.elementFromPoint(arguments[0], arguments[1]);
                 if (element) {
-                    element.scrollBy(0, arguments[2]);
-                    return {
-                        scrolled: true,
-                        elementTag: element.tagName,
-                        elementId: element.id,
-                        scrollTop: element.scrollTop
-                    };
+                    const isScrollable = element.scrollHeight > element.clientHeight || 
+                                       element.scrollWidth > element.clientWidth;
+                    if (!isScrollable) {
+                        // Try to find closest scrollable parent
+                        let parent = element.parentElement;
+                        while (parent && !(parent.scrollHeight > parent.clientHeight || parent.scrollWidth > parent.clientWidth)) {
+                            parent = parent.parentElement;
+                        }
+                        if (parent) {
+                            parent.scrollBy(0, arguments[2]);
+                            return {
+                                scrolled: true,
+                                elementTag: parent.tagName,
+                                elementId: parent.id,
+                                scrollTop: parent.scrollTop,
+                                isParent: true
+                            };
+                        }
+                    } else {
+                        element.scrollBy(0, arguments[2]);
+                        return {
+                            scrolled: true,
+                            elementTag: element.tagName,
+                            elementId: element.id,
+                            scrollTop: element.scrollTop,
+                            isParent: false
+                        };
+                    }
                 }
                 return { scrolled: false };
             """
             result = driver.execute_script(script, x, y, scroll_y)
             
             if result['scrolled']:
-                message = f"Scrolled element at ({x}, {y}) by {scroll_y} pixels"
+                target = "parent element" if result.get('isParent') else "element"
+                message = f"Scrolled {target} at ({x}, {y}) by {scroll_y} pixels"
             else:
-                return jsonify({"error": "No scrollable element found at coordinates"}), 400
+                # Try scrolling the window instead
+                driver.execute_script(f"window.scrollBy(0, {scroll_y});")
+                message = f"No scrollable element found at coordinates, scrolled window instead by {scroll_y} pixels"
                 
         else:
             return jsonify({"error": "Invalid scroll_type. Use 'pixels', 'element', or 'coordinates'."}), 400
 
         # Get current scroll position
-        scroll_position = driver.execute_script("return {y: window.pageYOffset};")
+        scroll_position = driver.execute_script("""
+            return {
+                y: window.pageYOffset,
+                documentHeight: document.documentElement.scrollHeight,
+                viewportHeight: window.innerHeight
+            };
+        """)
         
         return jsonify({
             "message": message,
@@ -1173,6 +1210,8 @@ def scroll_page(driver):
     except WebDriverException as e:
         return jsonify({"error": f"WebDriver error: {str(e)}"}), 500
     except Exception as e:
+        print(f"Scroll error: {str(e)}")
+        traceback.print_exc()
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
     
 @app.route('/drag_element', methods=['POST'])
