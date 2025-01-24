@@ -1037,6 +1037,28 @@ def type_input(driver):
         return jsonify({"error": "Either input text or special key must be provided"}), 400
 
     try:
+        # Check if there's an active text input element
+        active_element = driver.execute_script("""
+            const active = document.activeElement;
+            if (active) {
+                return {
+                    tag: active.tagName.toLowerCase(),
+                    type: active.type,
+                    isEditable: active.isContentEditable || 
+                              ['input', 'textarea'].includes(active.tagName.toLowerCase()) ||
+                              (active.tagName.toLowerCase() === 'input' && 
+                               ['text', 'password', 'email', 'number', 'search', 'tel', 'url'].includes(active.type))
+                };
+            }
+            return null;
+        """)
+
+        if not active_element or not active_element.get('isEditable'):
+            return jsonify({
+                "error": "No active text input element found",
+                "active_element": active_element
+            }), 400
+
         # Configure PyAutoGUI settings
         pyautogui.PAUSE = delay  # Set the delay between actions
         pyautogui.FAILSAFE = True  # Enable fail-safe feature
@@ -1094,7 +1116,8 @@ def type_input(driver):
         return jsonify({
             "message": "Keys sent successfully",
             "text": input_text if input_text else special_key,
-            "cleared_first": clear_first
+            "cleared_first": clear_first,
+            "active_element": active_element
         }), 200
 
     except Exception as e:
