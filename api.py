@@ -372,16 +372,14 @@ def start_browser():
     try:
         # First check if Chrome is already running
         try:
-            driver = resilient_connect(debugging_port)
-            if not refresh_enabled:
+            
+            if not refresh_enabled and is_chrome_running(debugging_port):
                 # If Chrome is running and refresh not requested, return current state
                 return jsonify({
                     "message": "Chrome already running",
                     "url": driver.current_url,
                     "title": driver.title
                 }), 200
-            # Clean up the driver before refresh
-            driver.quit()
         except Exception:
             # Chrome not running or not accessible
             pass
