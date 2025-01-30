@@ -604,7 +604,8 @@ def start_browser():
             prefs = {
                 "profile": {
                     "exit_type": "Normal",
-                    "exited_cleanly": True
+                    "exited_cleanly": True,
+                    "password_manager_enabled": False
                 },
                 "session": {
                     "restore_on_startup": 5,
@@ -616,7 +617,8 @@ def start_browser():
                     "show_home_button": False,
                     "should_restore_session": False,
                     "enable_session_restore": False
-                }
+                },
+                 "credentials_enable_service": False
             }
             
             with open(prefs_file, 'w') as f:
