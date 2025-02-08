@@ -363,11 +363,28 @@ def close_chrome_gracefully(debugging_port=9222):
         print(f"Graceful close failed: {str(e)}")
         return False
 
+def check_vnc_display(display=':1'):
+    """Check if the VNC display is accessible."""
+    try:
+        # Try to connect to X display
+        test_cmd = f"DISPLAY={display} xdpyinfo >/dev/null 2>&1"
+        result = subprocess.run(test_cmd, shell=True)
+        return result.returncode == 0
+    except Exception as e:
+        return False
+
 @app.route('/start_browser', methods=['POST'])
 def start_browser():
     data = request.json
     debugging_port = data.get('debugging_port', 9222)
     refresh_enabled = data.get('refresh_enabled', False)
+    display = data.get('display', ':1')
+
+    # First check VNC display connectivity
+    if not check_vnc_display(display):
+        return jsonify({
+            "error": f"Cannot connect to VNC display {display}. Please ensure VNC server is running and accessible."
+        }), 503
 
     try:
         # First check if Chrome is already running
@@ -393,7 +410,6 @@ def start_browser():
             time.sleep(1)  # Wait for processes to terminate
         
         chrome_path = data.get('chrome_path', '')
-        display = data.get('display', ':1')
         user_profile = data.get('user_profile', 'Default')
         
         # Clear session data before starting new browser
