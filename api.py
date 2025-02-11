@@ -379,13 +379,6 @@ def start_browser():
     debugging_port = data.get('debugging_port', 9222)
     refresh_enabled = data.get('refresh_enabled', False)
     display = data.get('display', ':1')
-    global_timeout = data.get('global_timeout', 60)  # 60 second default timeout
-
-    start_time = time.time()
-
-    def check_timeout():
-        if time.time() - start_time > global_timeout:
-            raise TimeoutException(f"Operation timed out after {global_timeout} seconds")
 
     # First check VNC display connectivity
     if not check_vnc_display(display):
@@ -396,7 +389,7 @@ def start_browser():
     try:
         # First check if Chrome is already running
         try:
-            check_timeout()
+            
             if not refresh_enabled and is_chrome_running(debugging_port):
                 # If Chrome is running and refresh not requested, return current state
                 return jsonify({
@@ -404,14 +397,11 @@ def start_browser():
                     "url": driver.current_url,
                     "title": driver.title
                 }), 200
-        except TimeoutException as te:
-            return jsonify({"error": str(te)}), 504
         except Exception:
             # Chrome not running or not accessible
             pass
 
         if refresh_enabled:
-            check_timeout()
             # Try graceful close first
             if not close_chrome_gracefully(debugging_port):
                 # Fall back to force kill if graceful close fails
@@ -422,7 +412,6 @@ def start_browser():
         chrome_path = data.get('chrome_path', '')
         user_profile = data.get('user_profile', 'Default')
         
-        check_timeout()
         # Clear session data before starting new browser
         clear_chrome_session(user_profile)
 
@@ -443,7 +432,6 @@ def start_browser():
             return jsonify({"error": "Chrome executable not found. Please provide the path."}), 400
 
         try:
-            check_timeout()
             os.environ['DISPLAY'] = display
             
             # Add these environment variables
@@ -651,13 +639,12 @@ def start_browser():
                 json.dump(prefs, f)
 
             # Start Chrome process
-            chrome_process = subprocess.Popen(chrome_command, env=os.environ)
-            
+            subprocess.Popen(chrome_command, env=os.environ)
+
             # Wait for Chrome to start and try to connect
             max_retries = 5
             for attempt in range(max_retries):
                 try:
-                    check_timeout()
                     time.sleep(2)  # Wait between attempts
                     driver = resilient_connect(debugging_port)
                     
@@ -675,49 +662,18 @@ def start_browser():
                     return jsonify({
                         "message": f"Chrome started successfully on port {debugging_port}",
                         "url": current_url,
-                        "title": page_title,
-                        "elapsed_time": time.time() - start_time
+                        "title": page_title
                     }), 200
-                except TimeoutException as te:
-                    if attempt == max_retries - 1:
-                        # Kill Chrome process if we're giving up
-                        try:
-                            chrome_process.kill()
-                        except:
-                            pass
-                        raise Exception(f"Failed to connect to Chrome after {max_retries} attempts: {str(te)}")
-                    continue
                 except Exception as e:
                     if attempt == max_retries - 1:
-                        # Kill Chrome process if we're giving up
-                        try:
-                            chrome_process.kill()
-                        except:
-                            pass
                         raise Exception(f"Failed to connect to Chrome after {max_retries} attempts: {str(e)}")
                     continue
 
-        except TimeoutException as te:
-            return jsonify({
-                "error": str(te),
-                "elapsed_time": time.time() - start_time
-            }), 504
         except Exception as e:
-            return jsonify({
-                "error": f"Failed to start Chrome: {str(e)}",
-                "elapsed_time": time.time() - start_time
-            }), 500
+            return jsonify({"error": f"Failed to start Chrome: {str(e)}"}), 500
 
-    except TimeoutException as te:
-        return jsonify({
-            "error": str(te),
-            "elapsed_time": time.time() - start_time
-        }), 504
     except Exception as e:
-        return jsonify({
-            "error": f"Unexpected error: {str(e)}",
-            "elapsed_time": time.time() - start_time
-        }), 500
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
 def connect_to_chrome(debugging_port=9222):
     """Attach to an already-running Chrome via remote debugging."""
