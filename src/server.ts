@@ -34,10 +34,10 @@ app.post('/start_browser', async (req: Request, res: Response) => {
         if (!stagehand) {
             console.log('Initializing Stagehand...');
             
-            // Get API key from request body
-            const apiKey = req.body.apiKey;
+            // Get API key from request body or environment variable
+            const apiKey = req.body.apiKey || process.env.ANTHROPIC_API_KEY;
             if (!apiKey) {
-                throw new Error("Anthropic API key is required in request body");
+                throw new Error("Anthropic API key is required either in request body or as ANTHROPIC_API_KEY environment variable");
             }
 
             // Make sure DISPLAY is set

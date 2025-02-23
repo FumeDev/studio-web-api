@@ -5,10 +5,6 @@ import path from "path";
 // Load .env from the root directory
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY must be set in .env");
-}
-
 const config: StagehandConfig = {
     env: "LOCAL",
     llm: {
