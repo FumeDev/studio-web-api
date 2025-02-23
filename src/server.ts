@@ -17,6 +17,7 @@ const app = express();
 app.use(express.json());
 
 let stagehand: Stagehand | null = null;
+let llmConfig: any = null;  // Store LLM configuration
 
 // Add error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
@@ -40,6 +41,13 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 throw new Error("Anthropic API key is required either in request body or as ANTHROPIC_API_KEY environment variable");
             }
 
+            // Store LLM configuration
+            llmConfig = {
+                provider: 'anthropic',
+                apiKey: apiKey,
+                modelName: 'claude-3-sonnet-20240229'
+            };
+            
             // Make sure DISPLAY is set
             if (!process.env.DISPLAY) {
                 console.log('DISPLAY not set, defaulting to :1');
@@ -57,11 +65,7 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 },
                 llm: {
                     ...StagehandConfig.llm,
-                    client: {
-                        provider: 'anthropic',
-                        apiKey: apiKey,
-                        modelName: 'claude-3-sonnet-20240229'
-                    }
+                    client: llmConfig
                 }
             });
             
@@ -168,6 +172,16 @@ app.post('/act', async (req: Request, res: Response) => {
         if (!stagehand?.page) {
             throw new Error("Browser not started");
         }
+
+        if (!llmConfig) {
+            throw new Error("LLM configuration not set. Please start the browser first with an API key.");
+        }
+
+        // Ensure LLM config is set
+        stagehand.setLLMConfig({
+            ...StagehandConfig.llm,
+            client: llmConfig
+        });
 
         const { action, url } = req.body;
         
