@@ -36,25 +36,20 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             if (!process.env.ANTHROPIC_API_KEY) {
                 throw new Error("ANTHROPIC_API_KEY environment variable is required");
             }
+
+            // Make sure DISPLAY is set
+            if (!process.env.DISPLAY) {
+                console.log('DISPLAY not set, defaulting to :1');
+                process.env.DISPLAY = ':1';
+            }
             
             stagehand = new Stagehand({
                 ...StagehandConfig,
-                llm: {
-                    ...StagehandConfig.llm,
-                    client: {
-                        provider: "anthropic",
-                        apiKey: process.env.ANTHROPIC_API_KEY
-                    }
-                },
                 browser: {
-                    headless: "new",
+                    ...StagehandConfig.browser,
                     args: [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-gpu',
-                        '--disable-software-rasterizer',
-                        '--headless=new',
+                        ...StagehandConfig.browser.args,
+                        `--display=${process.env.DISPLAY}`
                     ]
                 }
             });

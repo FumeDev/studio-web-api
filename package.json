@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "tsx src/server.ts",
+    "start": "./start.sh",
     "postinstall": "playwright install",
     "dev": "nodemon --exec 'tsx' src/server.ts"
   },

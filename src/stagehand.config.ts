@@ -27,12 +27,14 @@ const config: StagehandConfig = {
             '--disable-gpu',
             '--disable-software-rasterizer',
             '--headless=new',
+            `--display=${process.env.DISPLAY || ':1'}`
         ]
     },
     slowMo: 50,
     debug: true,
     launchOptions: {
         args: ['--start-maximized'],
+        executablePath: process.env.CHROME_PATH || undefined
     },
     contextOptions: {
         viewport: null,
@@ -54,7 +56,8 @@ const config: StagehandConfig = {
 console.log("Config:", {
     modelName: config.llm.modelName,
     provider: config.llm.client.provider,
-    apiKeyConfigured: !!config.llm.client.apiKey
+    apiKeyConfigured: !!config.llm.client.apiKey,
+    display: process.env.DISPLAY || ':1'
 });
 
 export default config; 
