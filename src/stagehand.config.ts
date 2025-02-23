@@ -30,22 +30,13 @@ const config: StagehandConfig = {
     slowMo: 50,
     debug: true,
     launchOptions: {
-        args: ['--start-maximized'],
+        args: ['--start-maximized']
     },
     contextOptions: {
         viewport: null,
         handleSIGINT: true,
         handleSIGTERM: true,
-        handleSIGHUP: true,
-    },
-    routeOptions: {
-        async onNewPage(page) {
-            const url = page.url();
-            await page.close();
-            if (stagehand?.page) {
-                await stagehand.page.goto(url);
-            }
-        }
+        handleSIGHUP: true
     }
 };
 
