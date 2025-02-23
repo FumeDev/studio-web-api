@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { Stagehand } from "@browserbasehq/stagehand";
 import StagehandConfig from "./stagehand.config";
 import { z } from "zod";
@@ -7,8 +7,8 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
-import { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
+
 dotenv.config();
 
 const execAsync = promisify(exec);
@@ -16,10 +16,11 @@ const execAsync = promisify(exec);
 const app = express();
 app.use(express.json());
 
+// We keep a single global Stagehand reference and a config
 let stagehand: Stagehand | null = null;
-let currentConfig: any = null;  // Renamed from llmConfig to be more descriptive
+let currentConfig: any = null;  // Holds dynamic runtime config (browser + LLM)
 
-// Add error handling middleware
+// ---- Error Handling Middleware ----
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     console.error('Error:', err);
     res.status(500).json({
@@ -29,19 +30,20 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     });
 });
 
-// Start browser endpoint
+// ---- 1. Start Browser Endpoint ----
 app.post('/start_browser', async (req: Request, res: Response) => {
     try {
-        // Get API key from request body or environment variable
+        // 1. Get the Anthropic API key from the request or environment
         const apiKey = req.body.apiKey || process.env.ANTHROPIC_API_KEY;
         if (!apiKey) {
             throw new Error("Anthropic API key is required either in request body or as ANTHROPIC_API_KEY environment variable");
         }
 
-        // Store current configuration with correct Anthropic key property
+        // 2. Build a new config that includes the correct anthropicApiKey property
         currentConfig = {
             browser: {
                 ...StagehandConfig.browser,
+                // Ensure we include the DISPLAY environment variable
                 args: [
                     ...StagehandConfig.browser.args,
                     `--display=${process.env.DISPLAY || ':1'}`
@@ -49,53 +51,57 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             },
             llm: {
                 provider: 'anthropic',
-                modelName: 'claude-3-sonnet-20240229',
-                anthropicApiKey: apiKey  // Changed from apiKey to anthropicApiKey
+                // Make sure to name it anthropicApiKey
+                anthropicApiKey: apiKey,
+                modelName: 'claude-3-sonnet-20240229'
             }
         };
 
-        // Always create a new Stagehand instance with current config
+        // 3. If a Stagehand instance is already running, close it
         if (stagehand) {
-            await stagehand.close(); // Clean up existing instance
+            console.log('Closing existing Stagehand instance...');
+            await stagehand.close();
         }
-        
+
+        // 4. Create a fresh Stagehand instance with the new config
+        console.log('Creating new Stagehand instance...');
         stagehand = new Stagehand(currentConfig);
-        console.log('Stagehand instance created');
-        
+
+        // 5. Initialize (launch browser, etc.)
         await stagehand.init();
         console.log('Stagehand initialized successfully');
-        
-        // Navigate to Google
+
+        // 6. (Optional) Navigate to Google
         console.log('Navigating to Google...');
         await stagehand.page.goto('https://www.google.com');
         console.log('Navigation to Google complete');
-        
-        res.json({ 
-            success: true, 
-            message: "Browser started successfully and navigated to Google" 
+
+        return res.json({ 
+            success: true,
+            message: "Browser started successfully and navigated to Google"
         });
 
     } catch (error: unknown) {
         console.error('Error starting browser:', error);
-        stagehand = null; // Reset on failure
+        stagehand = null;        // Reset on failure
         currentConfig = null;
-        res.status(500).json({ 
-            success: false, 
+        return res.status(500).json({ 
+            success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
             details: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
-// New goto endpoint
+// ---- 2. "Goto" Endpoint ----
 app.post('/goto', async (req: Request, res: Response) => {
     try {
+        // Must have an initialized Stagehand
         if (!stagehand?.page) {
             throw new Error("Browser not started");
         }
 
         const { url } = req.body;
-        
         if (!url) {
             throw new Error("URL is required");
         }
@@ -104,36 +110,35 @@ app.post('/goto', async (req: Request, res: Response) => {
         await stagehand.page.goto(url);
         console.log('Navigation complete');
 
-        res.json({ 
-            success: true, 
-            message: `Successfully navigated to ${url}` 
+        return res.json({
+            success: true,
+            message: `Successfully navigated to ${url}`
         });
 
     } catch (error: unknown) {
         console.error('Error in goto endpoint:', error);
-        res.status(500).json({ 
-            success: false, 
+        return res.status(500).json({
+            success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
             details: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
-// Screenshot endpoint - only Chrome window
+// ---- 3. Screenshot Endpoint ----
 app.get('/screenshot', async (req: Request, res: Response) => {
     try {
         if (!stagehand?.page) {
             throw new Error("Browser not started");
         }
 
-        // Take screenshot of just the browser viewport
+        // Capture only the current viewport
         const screenshotBuffer = await stagehand.page.screenshot({
-            fullPage: false, // Only capture current viewport
-            scale: 'css', // Use CSS pixels
-            animations: 'disabled', // Disable animations
-            caret: 'hide', // Hide text cursor
-            timeout: 5000,
-            // Remove optimizations option as it's not supported
+            fullPage: false,
+            scale: 'css',
+            animations: 'disabled',
+            caret: 'hide',
+            timeout: 5000
         });
 
         res.writeHead(200, {
@@ -141,34 +146,35 @@ app.get('/screenshot', async (req: Request, res: Response) => {
             'Content-Length': screenshotBuffer.length
         });
         res.end(screenshotBuffer);
+
     } catch (error: unknown) {
         console.error('Error taking screenshot:', error);
-        res.status(500).json({ 
-            success: false, 
+        return res.status(500).json({
+            success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
             details: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
-// Act endpoint
+// ---- 4. "Act" Endpoint ----
 app.post('/act', async (req: Request, res: Response) => {
     try {
+        // Must have a valid browser session
         if (!stagehand?.page) {
             throw new Error("Browser not started");
         }
-
+        // Must have a valid LLM config
         if (!currentConfig?.llm?.anthropicApiKey) {
             throw new Error("LLM configuration not set. Please start the browser first with an API key.");
         }
 
         const { action, url } = req.body;
-        
         if (!action) {
             throw new Error("Action description is required");
         }
 
-        // If URL is provided, navigate to it first
+        // If a URL is provided, navigate first
         if (url) {
             console.log('Navigating to:', url);
             await stagehand.page.goto(url);
@@ -176,28 +182,29 @@ app.post('/act', async (req: Request, res: Response) => {
         }
 
         console.log('Attempting action:', action);
-        
-        // Pass the action directly as a string
+        // Stagehand .act(...) call
         await stagehand.page.act(action);
-        
-        res.json({ success: true, message: "Action executed successfully" });
+
+        return res.json({ success: true, message: "Action executed successfully" });
 
     } catch (error: unknown) {
         console.error('Error in act endpoint:', error);
-        res.status(500).json({ 
-            success: false, 
+        return res.status(500).json({
+            success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
             details: error instanceof Error ? error.stack : undefined,
+            // We log some debug info about currentConfig
             config: {
                 modelName: currentConfig?.llm?.modelName,
-                provider: currentConfig?.llm?.client?.provider,
-                apiKeyConfigured: !!currentConfig?.llm?.client?.apiKey
+                provider: currentConfig?.llm?.provider,
+                // Are we sure we have a key?
+                anthropicApiKeySet: !!currentConfig?.llm?.anthropicApiKey
             }
         });
     }
 });
 
-// Folder tree endpoint
+// ---- 5. Folder Tree Endpoint ----
 app.get('/folder-tree', async (req: Request, res: Response) => {
     try {
         const folderPath = req.query.folder_path as string;
@@ -206,47 +213,46 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
         }
 
         const documentsPath = path.join(os.homedir(), 'Documents');
-        
-        // Check if Documents directory exists
+
+        // Verify Documents exists
         if (!fs.existsSync(documentsPath)) {
-            return res.status(404).json({ 
+            return res.status(404).json({
                 error: "Documents directory not found",
                 path: documentsPath
             });
         }
 
-        // Use the actual folder path instead of "Documents"
+        // Attempt to run a 'find' command up to -maxdepth 3
         const command = `cd "${documentsPath}" && find "${folderPath}" -mindepth 1 -maxdepth 3 2>/dev/null || echo "No files found"`;
-        
+
         const { stdout } = await execAsync(command);
-        
         if (!stdout.trim()) {
             return res.status(404).json({
                 message: "No files found in the specified path",
                 folder_path: folderPath
             });
         }
-        
-        res.json({
+
+        return res.json({
             message: "Folder tree retrieved successfully",
             folder_path: folderPath,
             output: stdout.split('\n').filter(Boolean)
         });
+
     } catch (error: unknown) {
         console.error('Error in folder-tree endpoint:', error);
-        res.status(500).json({ 
-            success: false, 
+        return res.status(500).json({
+            success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
             details: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
-// Find repo endpoint
+// ---- 6. Find Repo Endpoint ----
 app.post('/find-repo', async (req: express.Request, res: express.Response) => {
     try {
         const { remote_url } = req.body;
-        
         if (!remote_url) {
             return res.status(400).json({ error: "Remote URL not provided" });
         }
@@ -254,7 +260,7 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
         const documentsPath = path.join(os.homedir(), 'Documents');
         const maxDepth = 3;
 
-        // Function to get immediate subdirectories
+        // 1) Helper: get immediate subdirs (non-hidden)
         const getSubdirs = async (dirPath: string): Promise<string[]> => {
             try {
                 const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
@@ -267,18 +273,19 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
             }
         };
 
-        // Function to check if a directory is the target repo
+        // 2) Helper: check if a given directory is the target repo
         const isTargetRepo = async (dirPath: string): Promise<boolean> => {
             const gitConfigPath = path.join(dirPath, '.git', 'config');
             try {
                 const configContent = await fs.promises.readFile(gitConfigPath, 'utf-8');
+                // If the .git/config references remote_url, it's our repo
                 return configContent.includes(remote_url);
             } catch {
                 return false;
             }
         };
 
-        // BFS implementation
+        // 3) Perform BFS up to maxDepth
         const visited = new Set<string>();
         let currentLayer = [documentsPath];
         let depth = 0;
@@ -287,30 +294,29 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
             console.log(`Searching depth ${depth}...`);
             const nextLayer: string[] = [];
 
-            // Process current layer
             for (const currentPath of currentLayer) {
                 if (visited.has(currentPath)) continue;
                 visited.add(currentPath);
 
-                // Check if this is the target repo
+                // Check if it's the target repo
                 if (await isTargetRepo(currentPath)) {
                     const absPath = path.resolve(currentPath);
                     return res.json({
                         message: "Repository found",
                         path: absPath,
-                        depth: depth
+                        depth
                     });
                 }
 
-                // Add subdirectories to next layer
+                // Otherwise, add subdirectories
                 const subdirs = await getSubdirs(currentPath);
                 nextLayer.push(...subdirs);
             }
-
             currentLayer = nextLayer;
             depth++;
         }
 
+        // If we exhaust BFS without finding it
         return res.status(404).json({
             message: "Repository not found",
             path: null,
@@ -319,14 +325,15 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
 
     } catch (error: unknown) {
         console.error('Error in find-repo endpoint:', error);
-        res.status(500).json({
+        return res.status(500).json({
             error: error instanceof Error ? error.message : 'Unknown error',
             stack: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
+// ---- Server Listen ----
 const PORT = process.env.PORT || 5553;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-}); 
+});
