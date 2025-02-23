@@ -1,8 +1,0 @@
-{
-  "Click the suggestion to use AI": {
-    "description": "Option suggestion to 'Use AI to answer your question'",
-    "method": "click",
-    "arguments": [],
-    "selector": "xpath=/html/body[1]/div[2]/div[1]/div[1]/div[1]/div[2]/div[1]/ul[1]/li[1]"
-  }
-}
