@@ -19,24 +19,35 @@ const config: StagehandConfig = {
         }
     },
     browser: {
-        headless: true,
+        headless: "new",
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--headless=new',
         ]
     },
     slowMo: 50,
     debug: true,
     launchOptions: {
-        args: ['--start-maximized']
+        args: ['--start-maximized'],
     },
     contextOptions: {
         viewport: null,
         handleSIGINT: true,
         handleSIGTERM: true,
-        handleSIGHUP: true
+        handleSIGHUP: true,
+    },
+    routeOptions: {
+        async onNewPage(page) {
+            const url = page.url();
+            await page.close();
+            if (stagehand?.page) {
+                await stagehand.page.goto(url);
+            }
+        }
     }
 };
 

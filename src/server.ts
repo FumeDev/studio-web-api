@@ -36,23 +36,25 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             if (!process.env.ANTHROPIC_API_KEY) {
                 throw new Error("ANTHROPIC_API_KEY environment variable is required");
             }
-
-            // Create new Stagehand instance with minimal config
+            
             stagehand = new Stagehand({
+                ...StagehandConfig,
                 llm: {
-                    modelName: "claude-3-sonnet-20240229",
+                    ...StagehandConfig.llm,
                     client: {
                         provider: "anthropic",
                         apiKey: process.env.ANTHROPIC_API_KEY
                     }
                 },
                 browser: {
-                    headless: true,
+                    headless: "new",
                     args: [
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
                         '--disable-dev-shm-usage',
-                        '--disable-gpu'
+                        '--disable-gpu',
+                        '--disable-software-rasterizer',
+                        '--headless=new',
                     ]
                 }
             });
@@ -63,14 +65,9 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 await stagehand.init();
                 console.log('Stagehand initialized successfully');
                 
-                const page = stagehand.page;
-                if (!page) {
-                    throw new Error("Page not initialized");
-                }
-                
                 // Navigate to Google
                 console.log('Navigating to Google...');
-                await page.goto('https://www.google.com');
+                await stagehand.page.goto('https://www.google.com');
                 console.log('Navigation to Google complete');
                 
                 res.json({ 
@@ -78,8 +75,8 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                     message: "Browser started successfully and navigated to Google" 
                 });
             } catch (initError) {
-                console.error('Error during initialization:', initError);
-                stagehand = null; // Reset stagehand on init failure
+                console.error('Failed to initialize Stagehand:', initError);
+                stagehand = null; // Reset stagehand on failure
                 throw initError;
             }
         } else {
@@ -141,7 +138,7 @@ app.get('/screenshot', async (req: Request, res: Response) => {
             animations: 'disabled', // Disable animations
             caret: 'hide', // Hide text cursor
             timeout: 5000,
-            // Remove the optimizations option as it's not supported
+            // Remove optimizations option as it's not supported
         });
 
         res.writeHead(200, {
