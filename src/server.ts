@@ -1,5 +1,5 @@
-import express from 'express';
-import { Stagehand } from "@browserbasehq/stagehand";
+import express, { Request, Response, NextFunction } from 'express';
+import { Stagehand, StagehandOptions } from "@browserbasehq/stagehand";
 import StagehandConfig from "./stagehand.config";
 import { z } from "zod";
 import { exec } from 'child_process';
@@ -320,7 +320,7 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
 });
 
 // Setup agent endpoint
-app.post('/setup_agent', async (req, res) => {
+app.post('/setup_agent', async (req: Request, res: Response) => {
     try {
         // Validate request body
         const { anthropicApiKey, force } = SetupAgentSchema.parse(req.body);
@@ -342,10 +342,13 @@ app.post('/setup_agent', async (req, res) => {
         }
 
         // Create new config with provided API key
-        const configWithKey = {
-            ...StagehandConfig,
+        const configWithKey: StagehandOptions = {
+            browser: {
+                headless: false,
+                defaultViewport: null
+            },
             llm: {
-                ...StagehandConfig.llm,
+                modelName: 'claude-3-sonnet-20240229',
                 client: {
                     provider: 'anthropic',
                     apiKey: anthropicApiKey
@@ -355,15 +358,20 @@ app.post('/setup_agent', async (req, res) => {
 
         // Initialize new Stagehand instance
         console.log('Initializing Stagehand with provided API key...');
-        stagehand = new Stagehand(configWithKey);
-        await stagehand.init();
-        console.log('Stagehand initialized successfully');
+        try {
+            stagehand = new Stagehand(configWithKey);
+            await stagehand.init();
+            console.log('Stagehand initialized successfully');
 
-        res.json({
-            success: true,
-            message: "Agent setup completed successfully",
-            status: force ? "reinitialized" : "initialized"
-        });
+            res.json({
+                success: true,
+                message: "Agent setup completed successfully",
+                status: force ? "reinitialized" : "initialized"
+            });
+        } catch (initError) {
+            console.error('Stagehand initialization error:', initError);
+            throw new Error(`Failed to initialize Stagehand: ${initError instanceof Error ? initError.message : 'Unknown error'}`);
+        }
 
     } catch (error: unknown) {
         console.error('Error setting up agent:', error);
