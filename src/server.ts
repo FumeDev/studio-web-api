@@ -177,11 +177,23 @@ app.post('/act', async (req: Request, res: Response) => {
             throw new Error("LLM configuration not set. Please start the browser first with an API key.");
         }
 
-        // Ensure LLM config is set
-        stagehand.setLLMConfig({
-            ...StagehandConfig.llm,
-            client: llmConfig
+        // Reinitialize Stagehand with the stored LLM config
+        stagehand = new Stagehand({
+            ...StagehandConfig,
+            browser: {
+                ...StagehandConfig.browser,
+                args: [
+                    ...StagehandConfig.browser.args,
+                    `--display=${process.env.DISPLAY || ':1'}`
+                ]
+            },
+            llm: {
+                ...StagehandConfig.llm,
+                client: llmConfig
+            }
         });
+
+        await stagehand.init();
 
         const { action, url } = req.body;
         
