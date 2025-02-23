@@ -313,7 +313,7 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5553;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 }); 
