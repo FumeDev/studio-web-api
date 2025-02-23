@@ -1,5 +1,5 @@
-import express, { Request, Response, NextFunction } from 'express';
-import { Stagehand, StagehandOptions } from "@browserbasehq/stagehand";
+import express from 'express';
+import { Stagehand } from "@browserbasehq/stagehand";
 import StagehandConfig from "./stagehand.config";
 import { z } from "zod";
 import { exec } from 'child_process';
@@ -14,12 +14,6 @@ const app = express();
 app.use(express.json());
 
 let stagehand: Stagehand | null = null;
-
-// Add Zod schema for validation
-const SetupAgentSchema = z.object({
-    anthropicApiKey: z.string().min(1, "API key is required"),
-    force: z.boolean().optional().default(false)
-});
 
 // Add error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -315,70 +309,6 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
         res.status(500).json({
             error: error instanceof Error ? error.message : 'Unknown error',
             stack: error instanceof Error ? error.stack : undefined
-        });
-    }
-});
-
-// Setup agent endpoint
-app.post('/setup_agent', async (req: Request, res: Response) => {
-    try {
-        // Validate request body
-        const { anthropicApiKey, force } = SetupAgentSchema.parse(req.body);
-
-        // Check if agent already exists and is initialized
-        if (stagehand) {
-            if (!force) {
-                return res.json({
-                    success: true,
-                    message: "Agent already initialized. Send force: true to reinitialize.",
-                    status: "already_initialized"
-                });
-            }
-            
-            // If force is true, close existing instance
-            console.log('Closing existing Stagehand instance...');
-            await stagehand.close();
-            stagehand = null;
-        }
-
-        // Create new config with provided API key
-        const configWithKey: StagehandOptions = {
-            browser: {
-                headless: false,
-                defaultViewport: null
-            },
-            llm: {
-                modelName: 'claude-3-sonnet-20240229',
-                client: {
-                    provider: 'anthropic',
-                    apiKey: anthropicApiKey
-                }
-            }
-        };
-
-        // Initialize new Stagehand instance
-        console.log('Initializing Stagehand with provided API key...');
-        try {
-            stagehand = new Stagehand(configWithKey);
-            await stagehand.init();
-            console.log('Stagehand initialized successfully');
-
-            res.json({
-                success: true,
-                message: "Agent setup completed successfully",
-                status: force ? "reinitialized" : "initialized"
-            });
-        } catch (initError) {
-            console.error('Stagehand initialization error:', initError);
-            throw new Error(`Failed to initialize Stagehand: ${initError instanceof Error ? initError.message : 'Unknown error'}`);
-        }
-
-    } catch (error: unknown) {
-        console.error('Error setting up agent:', error);
-        res.status(500).json({
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            details: error instanceof Error ? error.stack : undefined
         });
     }
 });

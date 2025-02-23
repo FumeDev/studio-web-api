@@ -45,5 +45,3 @@ temp/
 # Misc
 .DS_Store
 Thumbs.db 
-screenshot.png
-test-endpoints.sh
