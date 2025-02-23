@@ -29,7 +29,7 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     });
 });
 
-// Start browser endpoint with automatic Google navigation
+// Start browser endpoint
 app.post('/start_browser', async (req: Request, res: Response) => {
     try {
         // Get API key from request body or environment variable
@@ -38,7 +38,7 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             throw new Error("Anthropic API key is required either in request body or as ANTHROPIC_API_KEY environment variable");
         }
 
-        // Store current configuration
+        // Store current configuration with correct Anthropic key property
         currentConfig = {
             browser: {
                 ...StagehandConfig.browser,
@@ -48,12 +48,9 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 ]
             },
             llm: {
+                provider: 'anthropic',
                 modelName: 'claude-3-sonnet-20240229',
-                client: {
-                    provider: 'anthropic',
-                    apiKey: apiKey,
-                    modelName: 'claude-3-sonnet-20240229'
-                }
+                anthropicApiKey: apiKey  // Changed from apiKey to anthropicApiKey
             }
         };
 
@@ -161,7 +158,7 @@ app.post('/act', async (req: Request, res: Response) => {
             throw new Error("Browser not started");
         }
 
-        if (!currentConfig?.llm?.client?.apiKey) {
+        if (!currentConfig?.llm?.anthropicApiKey) {
             throw new Error("LLM configuration not set. Please start the browser first with an API key.");
         }
 
