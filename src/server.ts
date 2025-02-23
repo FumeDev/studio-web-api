@@ -17,7 +17,7 @@ const app = express();
 app.use(express.json());
 
 let stagehand: Stagehand | null = null;
-let llmConfig: any = null;  // Store LLM configuration
+let currentConfig: any = null;  // Renamed from llmConfig to be more descriptive
 
 // Add error handling middleware
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
@@ -32,68 +32,56 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // Start browser endpoint with automatic Google navigation
 app.post('/start_browser', async (req: Request, res: Response) => {
     try {
-        if (!stagehand) {
-            console.log('Initializing Stagehand...');
-            
-            // Get API key from request body or environment variable
-            const apiKey = req.body.apiKey || process.env.ANTHROPIC_API_KEY;
-            if (!apiKey) {
-                throw new Error("Anthropic API key is required either in request body or as ANTHROPIC_API_KEY environment variable");
-            }
-
-            // Store LLM configuration
-            llmConfig = {
-                provider: 'anthropic',
-                apiKey: apiKey,
-                modelName: 'claude-3-sonnet-20240229'
-            };
-            
-            // Make sure DISPLAY is set
-            if (!process.env.DISPLAY) {
-                console.log('DISPLAY not set, defaulting to :1');
-                process.env.DISPLAY = ':1';
-            }
-            
-            stagehand = new Stagehand({
-                ...StagehandConfig,
-                browser: {
-                    ...StagehandConfig.browser,
-                    args: [
-                        ...StagehandConfig.browser.args,
-                        `--display=${process.env.DISPLAY || ':1'}`
-                    ]
-                },
-                llm: {
-                    modelName: 'claude-3-sonnet-20240229',
-                    client: llmConfig
-                }
-            });
-            
-            console.log('Stagehand instance created');
-            
-            try {
-                await stagehand.init();
-                console.log('Stagehand initialized successfully');
-                
-                // Navigate to Google
-                console.log('Navigating to Google...');
-                await stagehand.page.goto('https://www.google.com');
-                console.log('Navigation to Google complete');
-                
-                res.json({ 
-                    success: true, 
-                    message: "Browser started successfully and navigated to Google" 
-                });
-            } catch (initError) {
-                console.error('Failed to initialize Stagehand:', initError);
-                stagehand = null; // Reset stagehand on failure
-                throw initError;
-            }
-        } else {
-            res.json({ success: true, message: "Browser already running" });
+        // Get API key from request body or environment variable
+        const apiKey = req.body.apiKey || process.env.ANTHROPIC_API_KEY;
+        if (!apiKey) {
+            throw new Error("Anthropic API key is required either in request body or as ANTHROPIC_API_KEY environment variable");
         }
+
+        // Store current configuration
+        currentConfig = {
+            browser: {
+                ...StagehandConfig.browser,
+                args: [
+                    ...StagehandConfig.browser.args,
+                    `--display=${process.env.DISPLAY || ':1'}`
+                ]
+            },
+            llm: {
+                modelName: 'claude-3-sonnet-20240229',
+                client: {
+                    provider: 'anthropic',
+                    apiKey: apiKey,
+                    modelName: 'claude-3-sonnet-20240229'
+                }
+            }
+        };
+
+        // Always create a new Stagehand instance with current config
+        if (stagehand) {
+            await stagehand.close(); // Clean up existing instance
+        }
+        
+        stagehand = new Stagehand(currentConfig);
+        console.log('Stagehand instance created');
+        
+        await stagehand.init();
+        console.log('Stagehand initialized successfully');
+        
+        // Navigate to Google
+        console.log('Navigating to Google...');
+        await stagehand.page.goto('https://www.google.com');
+        console.log('Navigation to Google complete');
+        
+        res.json({ 
+            success: true, 
+            message: "Browser started successfully and navigated to Google" 
+        });
+
     } catch (error: unknown) {
         console.error('Error starting browser:', error);
+        stagehand = null; // Reset on failure
+        currentConfig = null;
         res.status(500).json({ 
             success: false, 
             error: error instanceof Error ? error.message : 'Unknown error',
@@ -173,7 +161,7 @@ app.post('/act', async (req: Request, res: Response) => {
             throw new Error("Browser not started");
         }
 
-        if (!llmConfig) {
+        if (!currentConfig?.llm?.client?.apiKey) {
             throw new Error("LLM configuration not set. Please start the browser first with an API key.");
         }
 
@@ -192,10 +180,8 @@ app.post('/act', async (req: Request, res: Response) => {
 
         console.log('Attempting action:', action);
         
-        // Execute the action directly without observe
-        await stagehand.page.act({
-            instruction: action
-        });
+        // Pass the action directly as a string
+        await stagehand.page.act(action);
         
         res.json({ success: true, message: "Action executed successfully" });
 
@@ -206,9 +192,9 @@ app.post('/act', async (req: Request, res: Response) => {
             error: error instanceof Error ? error.message : 'Unknown error',
             details: error instanceof Error ? error.stack : undefined,
             config: {
-                modelName: StagehandConfig.llm?.modelName,
-                provider: StagehandConfig.llm?.client?.provider,
-                apiKeyConfigured: !!llmConfig?.apiKey // Use the stored llmConfig
+                modelName: currentConfig?.llm?.modelName,
+                provider: currentConfig?.llm?.client?.provider,
+                apiKeyConfigured: !!currentConfig?.llm?.client?.apiKey
             }
         });
     }
