@@ -60,11 +60,11 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                     ...StagehandConfig.browser,
                     args: [
                         ...StagehandConfig.browser.args,
-                        `--display=${process.env.DISPLAY}`
+                        `--display=${process.env.DISPLAY || ':1'}`
                     ]
                 },
                 llm: {
-                    ...StagehandConfig.llm,
+                    modelName: 'claude-3-sonnet-20240229',
                     client: llmConfig
                 }
             });
@@ -177,24 +177,6 @@ app.post('/act', async (req: Request, res: Response) => {
             throw new Error("LLM configuration not set. Please start the browser first with an API key.");
         }
 
-        // Reinitialize Stagehand with the stored LLM config
-        stagehand = new Stagehand({
-            ...StagehandConfig,
-            browser: {
-                ...StagehandConfig.browser,
-                args: [
-                    ...StagehandConfig.browser.args,
-                    `--display=${process.env.DISPLAY || ':1'}`
-                ]
-            },
-            llm: {
-                ...StagehandConfig.llm,
-                client: llmConfig
-            }
-        });
-
-        await stagehand.init();
-
         const { action, url } = req.body;
         
         if (!action) {
@@ -208,24 +190,14 @@ app.post('/act', async (req: Request, res: Response) => {
             console.log('Navigation complete');
         }
 
-        console.log('Attempting to observe action:', action);
+        console.log('Attempting action:', action);
         
-        // First observe the action
-        const results = await stagehand.page.observe({
-            instruction: action,
-            onlyVisible: false,
-            returnAction: true
+        // Execute the action directly without observe
+        await stagehand.page.act({
+            instruction: action
         });
         
-        console.log('Observe results:', results);
-        
-        // Then execute it
-        if (results && results.length > 0) {
-            await stagehand.page.act(results[0]);
-            res.json({ success: true, message: "Action executed successfully" });
-        } else {
-            throw new Error("No actionable results found");
-        }
+        res.json({ success: true, message: "Action executed successfully" });
 
     } catch (error: unknown) {
         console.error('Error in act endpoint:', error);
@@ -236,7 +208,7 @@ app.post('/act', async (req: Request, res: Response) => {
             config: {
                 modelName: StagehandConfig.llm?.modelName,
                 provider: StagehandConfig.llm?.client?.provider,
-                apiKeyConfigured: !!StagehandConfig.llm?.client?.apiKey
+                apiKeyConfigured: !!llmConfig?.apiKey // Use the stored llmConfig
             }
         });
     }
