@@ -15,10 +15,18 @@ const config: StagehandConfig = {
         modelName: "claude-3-sonnet-20240229",
         client: {
             provider: "anthropic",
-            apiKey: process.env.ANTHROPIC_API_KEY
+            apiKey: process.env.ANTHROPIC_API_KEY || ''
         }
     },
-    headless: false,
+    browser: {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+        ]
+    },
     slowMo: 50,
     debug: true,
     launchOptions: {

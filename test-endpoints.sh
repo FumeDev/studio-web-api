@@ -67,7 +67,7 @@ print_response "$response"
 
 # 6. Get Folder Tree
 echo "6. Testing /folder-tree endpoint..."
-response=$(curl -s "$BASE_URL/folder-tree?folder_path=Documents")
+response=$(curl -s "$BASE_URL/folder-tree?folder_path=.")
 print_response "$response"
 
 # 7. Find Repository

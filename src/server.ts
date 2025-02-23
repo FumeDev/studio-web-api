@@ -31,13 +31,32 @@ app.post('/start_browser', async (req: Request, res: Response) => {
     try {
         if (!stagehand) {
             console.log('Initializing Stagehand...');
+            
+            // Make sure we have the API key
+            if (!process.env.ANTHROPIC_API_KEY) {
+                throw new Error("ANTHROPIC_API_KEY environment variable is required");
+            }
+            
             stagehand = new Stagehand({
                 ...StagehandConfig,
+                llm: {
+                    ...StagehandConfig.llm,
+                    client: {
+                        provider: "anthropic",
+                        apiKey: process.env.ANTHROPIC_API_KEY
+                    }
+                },
                 browser: {
-                    ...StagehandConfig.browser,
-                    headless: true // Force headless mode
+                    headless: true,
+                    args: [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu'
+                    ]
                 }
             });
+            
             console.log('Stagehand instance created');
             await stagehand.init();
             console.log('Stagehand initialized successfully');
@@ -45,33 +64,9 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             // Maximize the browser window
             const page = stagehand.page;
             
-            // Add script to prevent new tabs/windows
-            await page.addInitScript(() => {
-                window.open = function(url: string | URL | undefined) {
-                    if (url) {
-                        window.location.href = url.toString();
-                    }
-                    return null;
-                };
-                
-                // Override target="_blank" behavior
-                document.addEventListener('click', (e) => {
-                    const target = e.target as HTMLElement;
-                    if (target.tagName === 'A' && target.getAttribute('target') === '_blank') {
-                        e.preventDefault();
-                        window.location.href = (target as HTMLAnchorElement).href;
-                    }
-                }, true);
-            });
-            
-            await page.evaluate(() => {
-                window.moveTo(0, 0);
-                window.resizeTo(screen.width, screen.height);
-            });
-            
-            // Automatically navigate to Google
+            // Navigate to Google
             console.log('Navigating to Google...');
-            await stagehand.page.goto('https://www.google.com');
+            await page.goto('https://www.google.com');
             console.log('Navigation to Google complete');
             
             res.json({ 
@@ -228,14 +223,22 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
             });
         }
 
-        const command = `cd "${documentsPath}" && find "${folderPath}" -mindepth 1 -maxdepth 3`;
+        // Use the actual folder path instead of "Documents"
+        const command = `cd "${documentsPath}" && find "${folderPath}" -mindepth 1 -maxdepth 3 2>/dev/null || echo "No files found"`;
         
         const { stdout } = await execAsync(command);
+        
+        if (!stdout.trim()) {
+            return res.status(404).json({
+                message: "No files found in the specified path",
+                folder_path: folderPath
+            });
+        }
         
         res.json({
             message: "Folder tree retrieved successfully",
             folder_path: folderPath,
-            output: stdout
+            output: stdout.split('\n').filter(Boolean)
         });
     } catch (error: unknown) {
         console.error('Error in folder-tree endpoint:', error);
