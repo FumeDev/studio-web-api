@@ -7,6 +7,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
+import { Request, Response, NextFunction } from 'express';
 
 const execAsync = promisify(exec);
 
@@ -16,7 +17,7 @@ app.use(express.json());
 let stagehand: Stagehand | null = null;
 
 // Add error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     console.error('Error:', err);
     res.status(500).json({
         success: false,
@@ -26,11 +27,17 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Start browser endpoint with automatic Google navigation
-app.post('/start_browser', async (req, res) => {
+app.post('/start_browser', async (req: Request, res: Response) => {
     try {
         if (!stagehand) {
             console.log('Initializing Stagehand...');
-            stagehand = new Stagehand(StagehandConfig);
+            stagehand = new Stagehand({
+                ...StagehandConfig,
+                browser: {
+                    ...StagehandConfig.browser,
+                    headless: true // Force headless mode
+                }
+            });
             console.log('Stagehand instance created');
             await stagehand.init();
             console.log('Stagehand initialized successfully');
@@ -40,8 +47,10 @@ app.post('/start_browser', async (req, res) => {
             
             // Add script to prevent new tabs/windows
             await page.addInitScript(() => {
-                window.open = function(url) {
-                    window.location.href = url;
+                window.open = function(url: string | URL | undefined) {
+                    if (url) {
+                        window.location.href = url.toString();
+                    }
                     return null;
                 };
                 
@@ -72,18 +81,18 @@ app.post('/start_browser', async (req, res) => {
         } else {
             res.json({ success: true, message: "Browser already running" });
         }
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error starting browser:', error);
         res.status(500).json({ 
             success: false, 
-            error: error.message,
-            details: error.stack
+            error: error instanceof Error ? error.message : 'Unknown error',
+            details: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
 // New goto endpoint
-app.post('/goto', async (req, res) => {
+app.post('/goto', async (req: Request, res: Response) => {
     try {
         if (!stagehand?.page) {
             throw new Error("Browser not started");
@@ -104,18 +113,18 @@ app.post('/goto', async (req, res) => {
             message: `Successfully navigated to ${url}` 
         });
 
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error in goto endpoint:', error);
         res.status(500).json({ 
             success: false, 
-            error: error.message,
-            details: error.stack
+            error: error instanceof Error ? error.message : 'Unknown error',
+            details: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
 // Screenshot endpoint - only Chrome window
-app.get('/screenshot', async (req, res) => {
+app.get('/screenshot', async (req: Request, res: Response) => {
     try {
         if (!stagehand?.page) {
             throw new Error("Browser not started");
@@ -137,18 +146,18 @@ app.get('/screenshot', async (req, res) => {
             'Content-Length': screenshotBuffer.length
         });
         res.end(screenshotBuffer);
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error taking screenshot:', error);
         res.status(500).json({ 
             success: false, 
-            error: error.message,
-            details: error.stack 
+            error: error instanceof Error ? error.message : 'Unknown error',
+            details: error instanceof Error ? error.stack : undefined
         });
     }
 });
 
 // Act endpoint
-app.post('/act', async (req, res) => {
+app.post('/act', async (req: Request, res: Response) => {
     try {
         if (!stagehand?.page) {
             throw new Error("Browser not started");
@@ -186,12 +195,12 @@ app.post('/act', async (req, res) => {
             throw new Error("No actionable results found");
         }
 
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error in act endpoint:', error);
         res.status(500).json({ 
             success: false, 
-            error: error.message,
-            details: error.stack,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            details: error instanceof Error ? error.stack : undefined,
             config: {
                 modelName: StagehandConfig.llm?.modelName,
                 provider: StagehandConfig.llm?.client?.provider,
@@ -202,7 +211,7 @@ app.post('/act', async (req, res) => {
 });
 
 // Folder tree endpoint
-app.get('/folder-tree', async (req: express.Request, res: express.Response) => {
+app.get('/folder-tree', async (req: Request, res: Response) => {
     try {
         const folderPath = req.query.folder_path as string;
         if (!folderPath) {
@@ -210,6 +219,15 @@ app.get('/folder-tree', async (req: express.Request, res: express.Response) => {
         }
 
         const documentsPath = path.join(os.homedir(), 'Documents');
+        
+        // Check if Documents directory exists
+        if (!fs.existsSync(documentsPath)) {
+            return res.status(404).json({ 
+                error: "Documents directory not found",
+                path: documentsPath
+            });
+        }
+
         const command = `cd "${documentsPath}" && find "${folderPath}" -mindepth 1 -maxdepth 3`;
         
         const { stdout } = await execAsync(command);
@@ -219,7 +237,7 @@ app.get('/folder-tree', async (req: express.Request, res: express.Response) => {
             folder_path: folderPath,
             output: stdout
         });
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error in folder-tree endpoint:', error);
         res.status(500).json({ 
             success: false, 
@@ -246,8 +264,8 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
             try {
                 const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
                 return entries
-                    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
-                    .map(entry => path.join(dirPath, entry.name));
+                    .filter((entry: fs.Dirent) => entry.isDirectory() && !entry.name.startsWith('.'))
+                    .map((entry: fs.Dirent) => path.join(dirPath, entry.name));
             } catch (error) {
                 console.error(`Error reading directory ${dirPath}:`, error);
                 return [];
@@ -304,7 +322,7 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
             max_depth_reached: depth >= maxDepth
         });
 
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error in find-repo endpoint:', error);
         res.status(500).json({
             error: error instanceof Error ? error.message : 'Unknown error',
