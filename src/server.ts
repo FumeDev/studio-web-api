@@ -298,24 +298,31 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
             });
         }
 
-        // Use a platform-agnostic approach to list files
-        const getFilesRecursively = (dir: string, depth = 0, maxDepth = 3): string[] => {
+        // Use a platform-agnostic approach to list files with relative paths
+        const getFilesRecursively = (dir: string, baseDir: string, depth = 0, maxDepth = 3): string[] => {
             if (depth > maxDepth) return [];
             
             const files: string[] = [];
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                files.push(fullPath);
+            try {
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
                 
-                if (entry.isDirectory() && depth < maxDepth) {
-                    try {
-                        files.push(...getFilesRecursively(fullPath, depth + 1, maxDepth));
-                    } catch (err) {
-                        // Skip directories we can't access
+                for (const entry of entries) {
+                    const fullPath = path.join(dir, entry.name);
+                    // Convert to relative path from the base directory
+                    const relativePath = path.relative(baseDir, fullPath);
+                    files.push(relativePath);
+                    
+                    if (entry.isDirectory() && depth < maxDepth) {
+                        try {
+                            files.push(...getFilesRecursively(fullPath, baseDir, depth + 1, maxDepth));
+                        } catch (err) {
+                            // Skip directories we can't access
+                            console.log(`Skipping inaccessible directory: ${fullPath}`);
+                        }
                     }
                 }
+            } catch (err) {
+                console.error(`Error reading directory ${dir}:`, err);
             }
             
             return files;
@@ -330,7 +337,8 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                 });
             }
             
-            const files = getFilesRecursively(targetPath, 0, 3);
+            // Use the target path as the base for relative paths
+            const files = getFilesRecursively(targetPath, targetPath, 0, 3);
             
             return res.json({
                 message: "Folder tree retrieved successfully",
