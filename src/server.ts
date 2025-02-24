@@ -285,8 +285,8 @@ app.post('/act', async (req: Request, res: Response) => {
 // ---- 5. Folder Tree Endpoint ----
 app.get('/folder-tree', async (req: Request, res: Response) => {
     try {
-        // Add a default value of empty string if folder_path is not provided
-        const folderPath = (req.query.folder_path as string) || '';
+        // Match Python: no default value for folder_path
+        const folderPath = req.query.folder_path as string;
         
         const documentsPath = path.join(os.homedir(), 'Documents');
 
@@ -299,7 +299,7 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
         }
 
         // Use a platform-agnostic approach to list files with relative paths
-        const getFilesRecursively = (dir: string, baseDir: string, depth = 0, maxDepth = 3): string => {
+        const getFilesRecursively = (dir: string, baseDir: string, depth = 1, maxDepth = 3): string => {
             if (depth > maxDepth) return '';
             
             let output = '';
@@ -310,9 +310,12 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                     const fullPath = path.join(dir, entry.name);
                     // Convert to relative path from the base directory
                     const relativePath = path.relative(baseDir, fullPath);
-                    output += relativePath + '\n';
+                    // Skip the root directory (mindepth 1)
+                    if (depth >= 1) {
+                        output += relativePath + '\n';
+                    }
                     
-                    if (entry.isDirectory() && depth < maxDepth) {
+                    if (entry.isDirectory()) {
                         try {
                             output += getFilesRecursively(fullPath, baseDir, depth + 1, maxDepth);
                         } catch (err) {
@@ -329,7 +332,7 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
         };
         
         try {
-            const targetPath = path.join(documentsPath, folderPath);
+            const targetPath = path.join(documentsPath, folderPath || '');
             if (!fs.existsSync(targetPath)) {
                 return res.status(404).json({
                     message: "Folder not found",
@@ -338,12 +341,12 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
             }
             
             // Get output as a single string with paths separated by newlines
-            const output = getFilesRecursively(targetPath, targetPath, 0, 3);
+            const output = getFilesRecursively(targetPath, targetPath, 1, 3);
             
             return res.json({
                 message: "Folder tree retrieved successfully",
                 folder_path: folderPath,
-                output: output.trim() // Remove trailing newline
+                output: output // Don't trim to match Python exactly
             });
         } catch (error) {
             return res.status(500).json({
