@@ -67,17 +67,14 @@ app.post('/start_browser', async (req: Request, res: Response) => {
         currentConfig = {
             browser: {
                 ...StagehandConfig.browser,  // Keep Stagehand's base config
-                headless: false,  // Keep headful for VNC viewing
+                headless: true,  // Set to true for headless mode
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-accelerated-2d-canvas',
                     '--disable-gpu',
-                    '--display=:1',  // Explicitly set display for VNC
-                    '--window-size=1280,720',
-                    '--start-maximized',
-                    '--disable-features=site-per-process', // Help with rendering in VNC
+                    '--window-size=1280,720'
                 ],
                 defaultViewport: {
                     width: 1280,
