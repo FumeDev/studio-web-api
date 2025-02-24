@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import { Stagehand } from "@browserbasehq/stagehand";
 import StagehandConfig from "./stagehand.config";
 import { z } from "zod";
-import { exec, spawn } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as os from 'os';
@@ -19,58 +19,6 @@ app.use(express.json());
 // We keep a single global Stagehand reference and a config
 let stagehand: Stagehand | null = null;
 let currentConfig: any = null;  // Holds dynamic runtime config (browser + LLM)
-let xvfbProcess: ReturnType<typeof spawn> | null = null;
-
-// Function to check if X server is running on the specified display
-async function checkXvfbDisplay(display: string = ':1'): Promise<boolean> {
-    try {
-        await execAsync(`xdpyinfo -display ${display}`);
-        console.log(`X server is running on display ${display}`);
-        return true;
-    } catch (error) {
-        console.log(`X server is not running on display ${display}`);
-        return false;
-    }
-}
-
-// Function to start Xvfb on a display
-async function startXvfb(display: string = ':1', width: number = 1280, height: number = 720): Promise<boolean> {
-    try {
-        // First kill any existing Xvfb on this display
-        try {
-            await execAsync(`pkill -f "Xvfb ${display}"`);
-            console.log(`Killed existing Xvfb on ${display}`);
-        } catch (error) {
-            // It's ok if there's no process to kill
-        }
-
-        // Start Xvfb
-        console.log(`Starting Xvfb on display ${display} with resolution ${width}x${height}`);
-        xvfbProcess = spawn('Xvfb', [
-            display,
-            '-screen', '0', `${width}x${height}x24`,
-            '-ac',
-            '+extension', 'RANDR',
-            '+extension', 'RENDER',
-            '-noreset'
-        ], {
-            stdio: 'ignore',
-            detached: true
-        });
-
-        // Keep track of the process for later cleanup
-        xvfbProcess.unref();
-
-        // Wait for Xvfb to start
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // Verify Xvfb is running
-        return await checkXvfbDisplay(display);
-    } catch (error) {
-        console.error(`Failed to start Xvfb: ${error}`);
-        return false;
-    }
-}
 
 // ---- Error Handling Middleware ----
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
@@ -91,21 +39,6 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 success: true,
                 message: "Using existing browser session"
             });
-        }
-
-        // Check if X server is running, if not start it
-        const display = process.env.DISPLAY || ':1';
-        const xvfbRunning = await checkXvfbDisplay(display);
-        
-        if (!xvfbRunning) {
-            console.log('X server not running, attempting to start Xvfb');
-            const started = await startXvfb(display);
-            if (!started) {
-                return res.status(500).json({
-                    success: false,
-                    error: `Failed to start Xvfb on display ${display}. Please ensure Xvfb is installed.`
-                });
-            }
         }
 
         // 2. Build LLM config based on environment variables
@@ -135,10 +68,9 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             ...StagehandConfig,  // Use all base config
             browser: {
                 ...StagehandConfig.browser,  // Keep base browser settings
-                headless: false,  // Required for VNC
+                headless: "new",  // Use the new headless mode
                 args: [
                     ...StagehandConfig.browser.args,  // Keep base args
-                    // Additional runtime args if needed
                 ],
                 defaultViewport: {
                     width: 1280,
@@ -151,7 +83,10 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 ...StagehandConfig.launchOptions,
                 env: {
                     ...process.env,
-                    DISPLAY: display,
+                    // Force API keys to be set
+                    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+                    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+                    // Disable D-Bus
                     DBUS_SESSION_BUS_ADDRESS: '/dev/null',
                     CHROME_DBUS_DISABLE: '1'
                 }
@@ -471,53 +406,6 @@ app.post('/find-repo', async (req: express.Request, res: express.Response) => {
 
 // ---- Server Listen ----
 const PORT = process.env.PORT || 5553;
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-});
-
-// Cleanup function to handle server shutdown
-function cleanup() {
-    console.log('Server shutting down...');
-    
-    // Close Stagehand instance if it exists
-    if (stagehand) {
-        try {
-            console.log('Closing browser...');
-            stagehand.close();
-        } catch (error) {
-            console.error('Error closing browser:', error);
-        }
-        stagehand = null;
-    }
-    
-    // Kill Xvfb if we started it
-    if (xvfbProcess && xvfbProcess.pid) {
-        try {
-            console.log('Killing Xvfb process...');
-            process.kill(-xvfbProcess.pid, 'SIGKILL');
-        } catch (error) {
-            console.error('Error killing Xvfb process:', error);
-        }
-        xvfbProcess = null;
-    }
-    
-    console.log('Cleanup complete');
-}
-
-// Register cleanup handlers
-process.on('exit', cleanup);
-process.on('SIGINT', () => {
-    console.log('Received SIGINT');
-    cleanup();
-    process.exit(0);
-});
-process.on('SIGTERM', () => {
-    console.log('Received SIGTERM');
-    cleanup();
-    process.exit(0);
-});
-process.on('uncaughtException', (error) => {
-    console.error('Uncaught exception:', error);
-    cleanup();
-    process.exit(1);
 });

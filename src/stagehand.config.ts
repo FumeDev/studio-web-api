@@ -58,7 +58,7 @@ const chromePath = process.env.CHROME_PATH || findChromePath();
 const config = {
     env: "LOCAL",
     browser: {
-        headless: false,  // Required for VNC display
+        headless: "new",  // Use the new headless mode
         args: [
             // Core settings
             '--no-sandbox',
@@ -67,14 +67,8 @@ const config = {
             '--disable-gpu',
             '--disable-software-rasterizer',
             
-            // Display settings
-            '--start-maximized',
-            '--force-device-scale-factor=1.25',
-            
-            // D-Bus related flags
+            // Disable D-Bus to avoid errors
             '--disable-dbus',
-            '--disable-notifications',
-            '--disable-features=MediaRouter,WebRTC',
             
             // Session and popup management
             '--disable-session-crashed-bubble',
@@ -108,9 +102,13 @@ const config = {
     debug: true,
     launchOptions: {
         executablePath: chromePath,
+        // Explicitly set environment variables
         env: {
             ...process.env,
-            DISPLAY: process.env.DISPLAY || ':1',
+            // Force API keys to be set from .env file
+            ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+            OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+            // Disable D-Bus
             DBUS_SESSION_BUS_ADDRESS: '/dev/null',
             CHROME_DBUS_DISABLE: '1'
         }
@@ -127,8 +125,8 @@ console.log("Config:", {
     modelName: "claude-3-5-sonnet-20241022",
     provider: "anthropic",
     apiKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
-    display: process.env.DISPLAY || ':1',
-    chromePath: config.launchOptions.executablePath || "Not found"
+    chromePath: chromePath || "Not found",
+    headless: "new"
 });
 
 export default config; 
