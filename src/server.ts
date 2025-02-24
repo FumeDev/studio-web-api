@@ -47,7 +47,7 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             llmConfig = {
                 provider: 'anthropic',
                 anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-                modelName: 'claude-3-sonnet-20240229',
+                modelName: 'claude-3-5-sonnet-20241022',
                 temperature: 0.7,
                 maxTokens: 4096
             };
@@ -55,7 +55,7 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             llmConfig = {
                 provider: 'openai',
                 openaiApiKey: process.env.OPENAI_API_KEY,
-                modelName: 'gpt-4-turbo-preview',
+                modelName: 'gpt-4o',
                 temperature: 0.7,
                 maxTokens: 4096
             };
@@ -67,13 +67,15 @@ app.post('/start_browser', async (req: Request, res: Response) => {
         currentConfig = {
             browser: {
                 ...StagehandConfig.browser,  // Keep Stagehand's base config
-                headless: true,  // Set to true for headless mode
+                headless: false,
                 args: [
+                    ...StagehandConfig.browser.args,  // Keep Stagehand's args
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-accelerated-2d-canvas',
                     '--disable-gpu',
+                    '--display=:1',  // Always use :1 for VNC
                     '--window-size=1280,720'
                 ],
                 defaultViewport: {
