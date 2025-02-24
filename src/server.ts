@@ -299,10 +299,10 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
         }
 
         // Use a platform-agnostic approach to list files with relative paths
-        const getFilesRecursively = (dir: string, baseDir: string, depth = 0, maxDepth = 3): string[] => {
-            if (depth > maxDepth) return [];
+        const getFilesRecursively = (dir: string, baseDir: string, depth = 0, maxDepth = 3): string => {
+            if (depth > maxDepth) return '';
             
-            const files: string[] = [];
+            let output = '';
             try {
                 const entries = fs.readdirSync(dir, { withFileTypes: true });
                 
@@ -310,11 +310,11 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                     const fullPath = path.join(dir, entry.name);
                     // Convert to relative path from the base directory
                     const relativePath = path.relative(baseDir, fullPath);
-                    files.push(relativePath);
+                    output += relativePath + '\n';
                     
                     if (entry.isDirectory() && depth < maxDepth) {
                         try {
-                            files.push(...getFilesRecursively(fullPath, baseDir, depth + 1, maxDepth));
+                            output += getFilesRecursively(fullPath, baseDir, depth + 1, maxDepth);
                         } catch (err) {
                             // Skip directories we can't access
                             console.log(`Skipping inaccessible directory: ${fullPath}`);
@@ -325,7 +325,7 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                 console.error(`Error reading directory ${dir}:`, err);
             }
             
-            return files;
+            return output;
         };
         
         try {
@@ -337,13 +337,13 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                 });
             }
             
-            // Use the target path as the base for relative paths
-            const files = getFilesRecursively(targetPath, targetPath, 0, 3);
+            // Get output as a single string with paths separated by newlines
+            const output = getFilesRecursively(targetPath, targetPath, 0, 3);
             
             return res.json({
                 message: "Folder tree retrieved successfully",
                 folder_path: folderPath,
-                output: files
+                output: output.trim() // Remove trailing newline
             });
         } catch (error) {
             return res.status(500).json({
