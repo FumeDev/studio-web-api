@@ -2,28 +2,57 @@ import { Stagehand } from "@browserbasehq/stagehand";
 import dotenv from "dotenv";
 import path from "path";
 import * as os from 'os';
+import * as fs from 'fs';
 
 // Load .env from the root directory
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-// Helper to find Chrome path
+// Helper to find Chrome path with better Linux support
 function findChromePath(): string | undefined {
     const commonLocations = [
+        // Linux
         '/usr/bin/google-chrome',
         '/usr/bin/google-chrome-stable',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        // macOS
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        // Windows
         'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
     ];
     
-    return commonLocations.find(location => {
+    for (const location of commonLocations) {
         try {
-            return require('fs').existsSync(location);
-        } catch {
-            return false;
+            if (fs.existsSync(location)) {
+                console.log(`Found Chrome/Chromium at: ${location}`);
+                return location;
+            }
+        } catch (error) {
+            // Ignore errors
         }
-    });
+    }
+
+    // If we can't find Chrome in common locations, try using 'which' on Linux/macOS
+    if (os.platform() !== 'win32') {
+        try {
+            const { execSync } = require('child_process');
+            const chromePath = execSync('which google-chrome || which chromium || which chromium-browser').toString().trim();
+            if (chromePath) {
+                console.log(`Found Chrome/Chromium using which: ${chromePath}`);
+                return chromePath;
+            }
+        } catch (error) {
+            // Ignore errors from which command
+        }
+    }
+
+    console.warn("Could not find Chrome or Chromium executable");
+    return undefined;
 }
+
+// Get Chrome path
+const chromePath = process.env.CHROME_PATH || findChromePath();
 
 // Define the configuration object with the structure expected by the server code
 const config = {
@@ -78,7 +107,7 @@ const config = {
     slowMo: 50,
     debug: true,
     launchOptions: {
-        executablePath: process.env.CHROME_PATH || findChromePath(),
+        executablePath: chromePath,
         env: {
             ...process.env,
             DISPLAY: process.env.DISPLAY || ':1',
@@ -99,7 +128,7 @@ console.log("Config:", {
     provider: "anthropic",
     apiKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
     display: process.env.DISPLAY || ':1',
-    chromePath: config.launchOptions.executablePath
+    chromePath: config.launchOptions.executablePath || "Not found"
 });
 
 export default config; 
