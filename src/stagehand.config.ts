@@ -9,15 +9,13 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 const config = {
     env: "LOCAL",
     browser: {
-        headless: "new",
+        headless: true,  // Always use headless mode
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--disable-software-rasterizer',
-            '--headless=new',
-            `--display=${process.env.DISPLAY || ':1'}`
+            '--disable-software-rasterizer'
         ]
     },
     slowMo: 50,
