@@ -339,14 +339,15 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                     folder_path: folderPath
                 });
             }
-            
+
             // Get output as a single string with paths separated by newlines
             const output = getFilesRecursively(targetPath, targetPath, 1, 3);
             
+            // Match Python find command behavior: always return an object with empty string for empty results
             return res.json({
                 message: "Folder tree retrieved successfully",
                 folder_path: folderPath,
-                output: output // Don't trim to match Python exactly
+                output: output || "" // Ensure we return empty string instead of undefined/null
             });
         } catch (error) {
             return res.status(500).json({
