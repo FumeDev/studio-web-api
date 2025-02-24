@@ -10,7 +10,7 @@ const StagehandConfig: ConstructorParams = {
   apiKey: process.env.BROWSERBASE_API_KEY /* API key for authentication */,
   projectId: process.env.BROWSERBASE_PROJECT_ID /* Project identifier */,
   debugDom: undefined /* Enable DOM debugging features */,
-  headless: false /* Run browser in headless mode */,
+  headless: true /* Run browser in headless mode */,
   logger: (message: LogLine) =>
     console.log(logLineToString(message)) /* Custom logging function */,
   domSettleTimeoutMs: 30_000 /* Timeout for DOM to settle in milliseconds */,
