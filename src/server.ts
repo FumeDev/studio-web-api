@@ -308,8 +308,8 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                 
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    // Convert to relative path from the base directory
-                    const relativePath = path.relative(baseDir, fullPath);
+                    // Convert to relative path from the base directory and add './' prefix
+                    const relativePath = './' + path.relative(baseDir, fullPath);
                     // Skip the root directory (mindepth 1)
                     if (depth >= 1) {
                         output += relativePath + '\n';
