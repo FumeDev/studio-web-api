@@ -63,14 +63,26 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             throw new Error("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables");
         }
 
-        // 3. Build the complete config
+        // 3. Build the complete config with updated browser settings
         currentConfig = {
             browser: {
-                ...StagehandConfig.browser,
+                ...StagehandConfig.browser,  // Keep Stagehand's base config
+                headless: false,
                 args: [
-                    ...StagehandConfig.browser.args,
-                    `--display=${process.env.DISPLAY || ':1'}`
-                ]
+                    ...StagehandConfig.browser.args,  // Keep Stagehand's args
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--disable-gpu',
+                    '--display=:1',  // Always use :1 for VNC
+                    '--window-size=1280,720'
+                ],
+                defaultViewport: {
+                    width: 1280,
+                    height: 720
+                },
+                ignoreHTTPSErrors: true
             },
             llm: llmConfig
         };
