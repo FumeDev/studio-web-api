@@ -33,6 +33,7 @@ yarn-error.log*
 # Testing
 coverage/
 .nyc_output/
+test-endpoints.sh
 
 # Temporary files
 tmp/
@@ -46,4 +47,3 @@ temp/
 .DS_Store
 Thumbs.db 
 screenshot.png
-test-endpoints.sh

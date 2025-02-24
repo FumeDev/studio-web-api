@@ -33,45 +33,66 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // ---- 1. Start Browser Endpoint ----
 app.post('/start_browser', async (req: Request, res: Response) => {
     try {
-        // 1. Get the Anthropic API key from the request or environment
-        const apiKey = req.body.apiKey || process.env.ANTHROPIC_API_KEY;
-        if (!apiKey) {
-            throw new Error("Anthropic API key is required either in request body or as ANTHROPIC_API_KEY environment variable");
+        // If browser is already running, just return success
+        if (stagehand?.page) {
+            return res.json({ 
+                success: true,
+                message: "Using existing browser session"
+            });
         }
 
-        // 2. Build a new config that includes the correct anthropicApiKey property
+        // 2. Build LLM config based on environment variables
+        let llmConfig;
+        if (process.env.ANTHROPIC_API_KEY) {
+            llmConfig = {
+                provider: 'anthropic',
+                anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+                modelName: 'claude-3-sonnet-20240229',
+                temperature: 0.7,
+                maxTokens: 4096
+            };
+        } else if (process.env.OPENAI_API_KEY) {
+            llmConfig = {
+                provider: 'openai',
+                openaiApiKey: process.env.OPENAI_API_KEY,
+                modelName: 'gpt-4-turbo-preview',
+                temperature: 0.7,
+                maxTokens: 4096
+            };
+        } else {
+            throw new Error("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables");
+        }
+
+        // 3. Build the complete config
         currentConfig = {
             browser: {
                 ...StagehandConfig.browser,
-                // Ensure we include the DISPLAY environment variable
                 args: [
                     ...StagehandConfig.browser.args,
                     `--display=${process.env.DISPLAY || ':1'}`
                 ]
             },
-            llm: {
-                provider: 'anthropic',
-                // Make sure to name it anthropicApiKey
-                anthropicApiKey: apiKey,
-                modelName: 'claude-3-sonnet-20240229'
-            }
+            llm: llmConfig
         };
 
-        // 3. If a Stagehand instance is already running, close it
-        if (stagehand) {
-            console.log('Closing existing Stagehand instance...');
-            await stagehand.close();
-        }
+        console.log('Creating Stagehand with config:', {
+            ...currentConfig,
+            llm: {
+                ...currentConfig.llm,
+                anthropicApiKey: currentConfig.llm.anthropicApiKey ? '***' : undefined,
+                openaiApiKey: currentConfig.llm.openaiApiKey ? '***' : undefined
+            }
+        });
 
-        // 4. Create a fresh Stagehand instance with the new config
+        // Create a fresh Stagehand instance with the new config
         console.log('Creating new Stagehand instance...');
         stagehand = new Stagehand(currentConfig);
 
-        // 5. Initialize (launch browser, etc.)
+        // Initialize (launch browser, etc.)
         await stagehand.init();
         console.log('Stagehand initialized successfully');
 
-        // 6. (Optional) Navigate to Google
+        // Navigate to Google
         console.log('Navigating to Google...');
         await stagehand.page.goto('https://www.google.com');
         console.log('Navigation to Google complete');
@@ -165,7 +186,7 @@ app.post('/act', async (req: Request, res: Response) => {
             throw new Error("Browser not started");
         }
         // Must have a valid LLM config
-        if (!currentConfig?.llm?.anthropicApiKey) {
+        if (!currentConfig?.llm?.anthropicApiKey && !currentConfig?.llm?.openaiApiKey) {
             throw new Error("LLM configuration not set. Please start the browser first with an API key.");
         }
 
@@ -198,7 +219,8 @@ app.post('/act', async (req: Request, res: Response) => {
                 modelName: currentConfig?.llm?.modelName,
                 provider: currentConfig?.llm?.provider,
                 // Are we sure we have a key?
-                anthropicApiKeySet: !!currentConfig?.llm?.anthropicApiKey
+                anthropicApiKeySet: !!currentConfig?.llm?.anthropicApiKey,
+                openaiApiKeySet: !!currentConfig?.llm?.openaiApiKey
             }
         });
     }

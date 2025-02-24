@@ -3,7 +3,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "Xvfb :1 -screen 0 1024x768x24 & sleep 2 && DISPLAY=:1 tsx src/server.ts",
+    "start": "npx tsx src/server.ts",
+    "start:headless": "Xvfb :1 -screen 0 1024x768x24 & sleep 2 && DISPLAY=:1 npx tsx src/server.ts",
     "postinstall": "playwright install",
     "dev": "nodemon --exec 'tsx' src/server.ts"
   },
