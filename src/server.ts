@@ -65,15 +65,12 @@ app.post('/start_browser', async (req: Request, res: Response) => {
 
         // 3. Build the complete config with updated browser settings
         currentConfig = {
+            ...StagehandConfig,  // Use all base config
             browser: {
-                headless: true,  // Always use headless mode
+                ...StagehandConfig.browser,  // Keep base browser settings
                 args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--disable-gpu',
-                    '--window-size=1280,720'
+                    ...StagehandConfig.browser.args,  // Keep base args
+                    // Additional runtime args if needed
                 ],
                 defaultViewport: {
                     width: 1280,
@@ -81,7 +78,16 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 },
                 ignoreHTTPSErrors: true
             },
-            llm: llmConfig
+            llm: llmConfig,
+            launchOptions: {
+                ...StagehandConfig.launchOptions,
+                env: {
+                    ...process.env,
+                    DISPLAY: process.env.DISPLAY || ':1',
+                    DBUS_SESSION_BUS_ADDRESS: '/dev/null',
+                    CHROME_DBUS_DISABLE: '1'
+                }
+            }
         };
 
         console.log('Creating Stagehand with config:', {
