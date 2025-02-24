@@ -1,13 +1,25 @@
 #!/bin/bash
 
-# Kill any existing Chrome processes
+# Kill any existing Chrome processes (platform-agnostic approach)
 echo "Killing any existing Chrome processes..."
-pkill -f chrome || true
-pkill -f chromium || true
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # macOS
+  pkill -f "Google Chrome" || true
+else
+  # Other platforms
+  pkill -f chrome || true
+  pkill -f chromium || true
+fi
 
-# Kill any process using port 5553
+# Kill any process using port 5553 (platform-agnostic approach)
 echo "Freeing port 5553..."
-lsof -i :5553 | grep LISTEN | awk '{print $2}' | xargs -r kill -9 || true
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  # macOS
+  lsof -i :5553 | grep LISTEN | awk '{print $2}' | xargs kill -9 || true
+else
+  # Other platforms
+  lsof -i :5553 | grep LISTEN | awk '{print $2}' | xargs -r kill -9 || true
+fi
 
 # Set API keys from .env file if they exist
 if [ -f .env ]; then
@@ -21,10 +33,8 @@ if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
   echo "Please set at least one of these in your .env file or environment."
 fi
 
-# Set environment variables for headless Chrome
+# Set environment variables for headless Chrome (platform-agnostic)
 export PUPPETEER_HEADLESS=new
-export CHROME_DBUS_DISABLE=1
-export DBUS_SESSION_BUS_ADDRESS=/dev/null
 
 # Run the server
 echo "Starting server with headless Chrome..."

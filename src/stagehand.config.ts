@@ -7,14 +7,9 @@ import * as fs from 'fs';
 // Load .env from the root directory
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-// Helper to find Chrome path with better Linux support
+// Helper to find Chrome path
 function findChromePath(): string | undefined {
     const commonLocations = [
-        // Linux
-        '/usr/bin/google-chrome',
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/chromium',
-        '/usr/bin/chromium-browser',
         // macOS
         '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         // Windows
@@ -25,7 +20,7 @@ function findChromePath(): string | undefined {
     for (const location of commonLocations) {
         try {
             if (fs.existsSync(location)) {
-                console.log(`Found Chrome/Chromium at: ${location}`);
+                console.log(`Found Chrome at: ${location}`);
                 return location;
             }
         } catch (error) {
@@ -33,21 +28,7 @@ function findChromePath(): string | undefined {
         }
     }
 
-    // If we can't find Chrome in common locations, try using 'which' on Linux/macOS
-    if (os.platform() !== 'win32') {
-        try {
-            const { execSync } = require('child_process');
-            const chromePath = execSync('which google-chrome || which chromium || which chromium-browser').toString().trim();
-            if (chromePath) {
-                console.log(`Found Chrome/Chromium using which: ${chromePath}`);
-                return chromePath;
-            }
-        } catch (error) {
-            // Ignore errors from which command
-        }
-    }
-
-    console.warn("Could not find Chrome or Chromium executable");
+    console.warn("Could not find Chrome executable");
     return undefined;
 }
 
@@ -65,24 +46,18 @@ const config = {
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--disable-software-rasterizer',
             
             // Explicitly set headless mode
             '--headless=new',
             
-            // Disable D-Bus to avoid errors
-            '--disable-dbus',
-            
             // Session and popup management
             '--disable-session-crashed-bubble',
             '--no-restore-session-state',
-            '--disable-session-service',
             '--disable-crash-reporter',
             '--restore-last-session=false',
             '--disable-popup-blocking',
             '--disable-infobars',
             '--disable-translate',
-            '--disable-sync',
             '--no-default-browser-check',
             '--no-first-run',
             
@@ -90,12 +65,6 @@ const config = {
             '--disable-background-timer-throttling',
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
-            '--disable-background-networking',
-            
-            // Additional security settings
-            '--disable-client-side-phishing-detection',
-            '--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync',
-            '--silent-debugger-extension-api',
             
             // Window size
             '--window-size=1280,720'
@@ -110,10 +79,7 @@ const config = {
             ...process.env,
             // Force API keys to be set from .env file
             ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-            OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-            // Disable D-Bus
-            DBUS_SESSION_BUS_ADDRESS: '/dev/null',
-            CHROME_DBUS_DISABLE: '1'
+            OPENAI_API_KEY: process.env.OPENAI_API_KEY
         }
     },
     contextOptions: {

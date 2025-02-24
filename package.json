@@ -4,11 +4,8 @@
   "scripts": {
     "build": "tsc",
     "start": "./start.sh",
-    "start:linux": "./start-linux.sh",
-    "start:headless": "Xvfb :1 -screen 0 1024x768x24 & sleep 2 && DISPLAY=:1 npx tsx src/server.ts",
-    "start:linux-headless": "PUPPETEER_HEADLESS=new CHROME_DBUS_DISABLE=1 DBUS_SESSION_BUS_ADDRESS=/dev/null npx tsx src/server.ts",
-    "postinstall": "playwright install",
-    "dev": "nodemon --exec 'tsx' src/server.ts"
+    "dev": "nodemon --exec 'tsx' src/server.ts",
+    "postinstall": "playwright install"
   },
   "dependencies": {
     "@browserbasehq/sdk": "2.3.0",

@@ -2,7 +2,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import { Stagehand } from "@browserbasehq/stagehand";
 import StagehandConfig from "./stagehand.config";
 import { ensureHeadlessConfig, logBrowserConfig } from "./browser-config";
-import { z } from "zod";
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
@@ -42,7 +41,7 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             });
         }
 
-        // 2. Build LLM config based on environment variables
+        // Build LLM config based on environment variables
         let llmConfig;
         if (process.env.ANTHROPIC_API_KEY) {
             llmConfig = {
@@ -64,7 +63,7 @@ app.post('/start_browser', async (req: Request, res: Response) => {
             throw new Error("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables");
         }
 
-        // 3. Build the complete config with updated browser settings
+        // Build the complete config with updated browser settings
         let baseConfig = {
             ...StagehandConfig,  // Use all base config
             browser: {
@@ -72,7 +71,6 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                 headless: "new",  // Use the new headless mode
                 args: [
                     ...StagehandConfig.browser.args,  // Keep base args
-                    // Add additional args for headless mode
                     '--headless=new',
                 ],
                 defaultViewport: {
@@ -89,9 +87,6 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                     // Force API keys to be set
                     ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
                     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-                    // Disable D-Bus
-                    DBUS_SESSION_BUS_ADDRESS: '/dev/null',
-                    CHROME_DBUS_DISABLE: '1',
                     // Set headless mode
                     PUPPETEER_HEADLESS: 'new'
                 }
@@ -305,23 +300,51 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
             });
         }
 
-        // Attempt to run a 'find' command up to -maxdepth 3
-        const command = `cd "${documentsPath}" && find "${folderPath}" -mindepth 1 -maxdepth 3 2>/dev/null || echo "No files found"`;
-
-        const { stdout } = await execAsync(command);
-        if (!stdout.trim()) {
-            return res.status(404).json({
-                message: "No files found in the specified path",
-                folder_path: folderPath
+        // Use a platform-agnostic approach to list files
+        const getFilesRecursively = (dir: string, depth = 0, maxDepth = 3): string[] => {
+            if (depth > maxDepth) return [];
+            
+            const files: string[] = [];
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                files.push(fullPath);
+                
+                if (entry.isDirectory() && depth < maxDepth) {
+                    try {
+                        files.push(...getFilesRecursively(fullPath, depth + 1, maxDepth));
+                    } catch (err) {
+                        // Skip directories we can't access
+                    }
+                }
+            }
+            
+            return files;
+        };
+        
+        try {
+            const targetPath = path.join(documentsPath, folderPath);
+            if (!fs.existsSync(targetPath)) {
+                return res.status(404).json({
+                    message: "Folder not found",
+                    folder_path: folderPath
+                });
+            }
+            
+            const files = getFilesRecursively(targetPath, 0, 3);
+            
+            return res.json({
+                message: "Folder tree retrieved successfully",
+                folder_path: folderPath,
+                output: files
+            });
+        } catch (error) {
+            return res.status(500).json({
+                message: "Error retrieving folder tree",
+                error: error instanceof Error ? error.message : 'Unknown error'
             });
         }
-
-        return res.json({
-            message: "Folder tree retrieved successfully",
-            folder_path: folderPath,
-            output: stdout.split('\n').filter(Boolean)
-        });
-
     } catch (error: unknown) {
         console.error('Error in folder-tree endpoint:', error);
         return res.status(500).json({

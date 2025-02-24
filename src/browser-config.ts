@@ -25,8 +25,6 @@ export function ensureHeadlessConfig(config: any): any {
   updatedConfig.launchOptions = updatedConfig.launchOptions || {};
   updatedConfig.launchOptions.env = updatedConfig.launchOptions.env || {};
   updatedConfig.launchOptions.env.PUPPETEER_HEADLESS = 'new';
-  updatedConfig.launchOptions.env.CHROME_DBUS_DISABLE = '1';
-  updatedConfig.launchOptions.env.DBUS_SESSION_BUS_ADDRESS = '/dev/null';
   
   return updatedConfig;
 }
@@ -40,6 +38,4 @@ export function logBrowserConfig(config: any): void {
   console.log('- Headless mode:', config.browser?.headless);
   console.log('- Args includes headless=new:', config.browser?.args?.includes('--headless=new'));
   console.log('- PUPPETEER_HEADLESS:', config.launchOptions?.env?.PUPPETEER_HEADLESS);
-  console.log('- CHROME_DBUS_DISABLE:', config.launchOptions?.env?.CHROME_DBUS_DISABLE);
-  console.log('- DBUS_SESSION_BUS_ADDRESS:', config.launchOptions?.env?.DBUS_SESSION_BUS_ADDRESS);
 } 
