@@ -1,19 +1,13 @@
-import { StagehandConfig } from "@browserbasehq/stagehand";
+import { Stagehand } from "@browserbasehq/stagehand";
 import dotenv from "dotenv";
 import path from "path";
 
 // Load .env from the root directory
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-const config: StagehandConfig = {
+// Define the configuration object with the structure expected by the server code
+const config = {
     env: "LOCAL",
-    llm: {
-        modelName: "claude-3-sonnet-20240229",
-        client: {
-            provider: "anthropic",
-            apiKey: process.env.ANTHROPIC_API_KEY || ''
-        }
-    },
     browser: {
         headless: "new",
         args: [
@@ -39,20 +33,20 @@ const config: StagehandConfig = {
         handleSIGHUP: true,
     },
     routeOptions: {
-        async onNewPage(page) {
+        async onNewPage(page: any) {
             const url = page.url();
             await page.close();
-            if (stagehand?.page) {
-                await stagehand.page.goto(url);
+            if ((global as any).stagehand?.page) {
+                await (global as any).stagehand.page.goto(url);
             }
         }
     }
 };
 
 console.log("Config:", {
-    modelName: config.llm.modelName,
-    provider: config.llm.client.provider,
-    apiKeyConfigured: !!config.llm.client.apiKey,
+    modelName: "claude-3-5-sonnet-20241022", // Using the updated model name
+    provider: "anthropic",
+    apiKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
     display: process.env.DISPLAY || ':1'
 });
 
