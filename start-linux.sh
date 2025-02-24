@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# This script is specifically for Linux environments to ensure Chrome runs properly in headless mode
+
 # Kill any existing Chrome processes
 echo "Killing any existing Chrome processes..."
 pkill -f chrome || true
@@ -26,6 +28,6 @@ export PUPPETEER_HEADLESS=new
 export CHROME_DBUS_DISABLE=1
 export DBUS_SESSION_BUS_ADDRESS=/dev/null
 
-# Run the server
-echo "Starting server with headless Chrome..."
-npx tsx src/server.ts 
+# Explicitly set the browser to use headless mode
+echo "Starting server with headless Chrome in Linux environment..."
+BROWSER_HEADLESS=new npx tsx src/server.ts 

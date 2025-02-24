@@ -67,6 +67,9 @@ const config = {
             '--disable-gpu',
             '--disable-software-rasterizer',
             
+            // Explicitly set headless mode
+            '--headless=new',
+            
             // Disable D-Bus to avoid errors
             '--disable-dbus',
             

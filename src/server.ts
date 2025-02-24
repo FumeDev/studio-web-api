@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { Stagehand } from "@browserbasehq/stagehand";
 import StagehandConfig from "./stagehand.config";
+import { ensureHeadlessConfig, logBrowserConfig } from "./browser-config";
 import { z } from "zod";
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -64,13 +65,15 @@ app.post('/start_browser', async (req: Request, res: Response) => {
         }
 
         // 3. Build the complete config with updated browser settings
-        currentConfig = {
+        let baseConfig = {
             ...StagehandConfig,  // Use all base config
             browser: {
                 ...StagehandConfig.browser,  // Keep base browser settings
                 headless: "new",  // Use the new headless mode
                 args: [
                     ...StagehandConfig.browser.args,  // Keep base args
+                    // Add additional args for headless mode
+                    '--headless=new',
                 ],
                 defaultViewport: {
                     width: 1280,
@@ -88,10 +91,18 @@ app.post('/start_browser', async (req: Request, res: Response) => {
                     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
                     // Disable D-Bus
                     DBUS_SESSION_BUS_ADDRESS: '/dev/null',
-                    CHROME_DBUS_DISABLE: '1'
+                    CHROME_DBUS_DISABLE: '1',
+                    // Set headless mode
+                    PUPPETEER_HEADLESS: 'new'
                 }
             }
         };
+
+        // Ensure headless mode is properly set
+        currentConfig = ensureHeadlessConfig(baseConfig);
+        
+        // Log the browser configuration
+        logBrowserConfig(currentConfig);
 
         console.log('Creating Stagehand with config:', {
             ...currentConfig,
