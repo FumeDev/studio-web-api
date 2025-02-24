@@ -285,11 +285,9 @@ app.post('/act', async (req: Request, res: Response) => {
 // ---- 5. Folder Tree Endpoint ----
 app.get('/folder-tree', async (req: Request, res: Response) => {
     try {
-        const folderPath = req.query.folder_path as string;
-        if (!folderPath) {
-            return res.status(400).json({ error: "folder_path query parameter is required" });
-        }
-
+        // Add a default value of empty string if folder_path is not provided
+        const folderPath = (req.query.folder_path as string) || '';
+        
         const documentsPath = path.join(os.homedir(), 'Documents');
 
         // Verify Documents exists
