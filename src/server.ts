@@ -85,10 +85,8 @@ app.post('/start_browser', async (req: Request, res: Response) => {
 
         console.log('Creating Stagehand with config:', {
             ...currentConfig,
-            llm: {
-                ...currentConfig.llm,
-                anthropicApiKey: currentConfig.llm.anthropicApiKey ? '***' : undefined,
-                openaiApiKey: currentConfig.llm.openaiApiKey ? '***' : undefined
+            modelClientOptions: {
+                apiKey: '***' // Hide the API key
             }
         });
 
