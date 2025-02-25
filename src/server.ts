@@ -66,31 +66,15 @@ app.post('/start_browser', async (req: Request, res: Response) => {
         // Build the complete config with updated browser settings
         let baseConfig = {
             ...StagehandConfig,  // Use all base config
-            browser: {
-                ...StagehandConfig.browser,  // Keep base browser settings
-                headless: "false",  // Use the new headless mode
-                args: [
-                    ...StagehandConfig.browser.args,  // Keep base args
-                    '--headless=false',
-                ],
-                defaultViewport: {
-                    width: 1280,
-                    height: 720
-                },
-                ignoreHTTPSErrors: true
+            headless: false,  // Set headless mode directly
+            modelName: llmConfig.modelName,
+            modelClientOptions: {
+                apiKey: llmConfig.provider === 'anthropic' ? llmConfig.anthropicApiKey : llmConfig.openaiApiKey,
             },
-            llm: llmConfig,
-            launchOptions: {
-                ...StagehandConfig.launchOptions,
-                env: {
-                    ...process.env,
-                    // Force API keys to be set
-                    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-                    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-                    // Set headless mode
-                    PUPPETEER_HEADLESS: 'false'
-                }
-            }
+            env: "LOCAL",
+            domSettleTimeoutMs: 30_000,
+            logger: (message: any) => console.log(message),
+            debugDom: false
         };
 
         // Ensure headless mode is properly set
