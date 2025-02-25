@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
-import { Stagehand, ConstructorParams } from "@browserbasehq/stagehand";
+import { Stagehand } from "@browserbasehq/stagehand";
 import StagehandConfig from "./stagehand.config";
-import { ensureHeadfulConfig, logBrowserConfig } from "./browser-config";
+import { ensureHeadlessConfig, logBrowserConfig } from "./browser-config";
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
@@ -42,50 +42,59 @@ app.post('/start_browser', async (req: Request, res: Response) => {
         }
 
         // Build LLM config based on environment variables
-        let llmConfig: {
-            provider: 'anthropic' | 'openai';
-            modelName: 'claude-3-5-sonnet-20241022' | 'gpt-4o';
-            temperature: number;
-            maxTokens: number;
-            anthropicApiKey?: string;
-            openaiApiKey?: string;
-        };
-
+        let llmConfig;
         if (process.env.ANTHROPIC_API_KEY) {
             llmConfig = {
                 provider: 'anthropic',
+                anthropicApiKey: process.env.ANTHROPIC_API_KEY,
                 modelName: 'claude-3-5-sonnet-20241022',
                 temperature: 0.7,
-                maxTokens: 4096,
-                anthropicApiKey: process.env.ANTHROPIC_API_KEY
+                maxTokens: 4096
             };
         } else if (process.env.OPENAI_API_KEY) {
             llmConfig = {
                 provider: 'openai',
+                openaiApiKey: process.env.OPENAI_API_KEY,
                 modelName: 'gpt-4o',
                 temperature: 0.7,
-                maxTokens: 4096,
-                openaiApiKey: process.env.OPENAI_API_KEY
+                maxTokens: 4096
             };
         } else {
             throw new Error("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables");
         }
 
         // Build the complete config with updated browser settings
-        let baseConfig: ConstructorParams = {
+        let baseConfig = {
             ...StagehandConfig,  // Use all base config
-            headless: false,  // Use headful mode
-            modelClientOptions: {
-                apiKey: process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY,
+            browser: {
+                ...StagehandConfig.browser,  // Keep base browser settings
+                headless: "false",  // Use the new headless mode
+                args: [
+                    ...StagehandConfig.browser.args,  // Keep base args
+                    '--headless=false',
+                ],
+                defaultViewport: {
+                    width: 1280,
+                    height: 720
+                },
+                ignoreHTTPSErrors: true
             },
-            modelName: llmConfig.modelName as 'claude-3-5-sonnet-20241022' | 'gpt-4o',
-            env: "LOCAL",
-            debugDom: true,  // Enable DOM debugging for better visibility
-            domSettleTimeoutMs: 30_000
+            llm: llmConfig,
+            launchOptions: {
+                ...StagehandConfig.launchOptions,
+                env: {
+                    ...process.env,
+                    // Force API keys to be set
+                    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+                    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+                    // Set headless mode
+                    PUPPETEER_HEADLESS: 'false'
+                }
+            }
         };
 
-        // Ensure headful mode is properly set
-        currentConfig = ensureHeadfulConfig(baseConfig);
+        // Ensure headless mode is properly set
+        currentConfig = ensureHeadlessConfig(baseConfig);
         
         // Log the browser configuration
         logBrowserConfig(currentConfig);

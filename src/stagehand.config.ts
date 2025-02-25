@@ -8,7 +8,7 @@ const StagehandConfig: ConstructorParams = {
     apiKey: process.env.BROWSERBASE_API_KEY /* API key for authentication */,
     projectId: process.env.BROWSERBASE_PROJECT_ID /* Project identifier */,
     debugDom: undefined /* Enable DOM debugging features */,
-    headless: true /* Run browser in headless mode */,
+    headless: false /* Run browser in headless mode */,
     logger: (message: LogLine) =>
         console.log(message) /* Custom logging function */,
     domSettleTimeoutMs: 30_000 /* Timeout for DOM to settle in milliseconds */,
@@ -28,7 +28,7 @@ console.log("Config:", {
     modelName: "claude-3-5-sonnet-20241022",
     provider: "anthropic",
     apiKeyConfigured: !!process.env.ANTHROPIC_API_KEY,
-    headless: "new"
+    headless: "false"
 });
 
 export default StagehandConfig; 

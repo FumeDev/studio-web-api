@@ -1,5 +1,5 @@
 /**
- * This file contains helper functions to ensure the browser is properly configured for headless/headful mode
+ * This file contains helper functions to ensure the browser is properly configured for headless mode
  */
 
 /**
@@ -25,31 +25,6 @@ export function ensureHeadlessConfig(config: any): any {
   updatedConfig.launchOptions = updatedConfig.launchOptions || {};
   updatedConfig.launchOptions.env = updatedConfig.launchOptions.env || {};
   updatedConfig.launchOptions.env.PUPPETEER_HEADLESS = 'new';
-  
-  return updatedConfig;
-}
-
-/**
- * Ensures the browser configuration is properly set for headful mode
- * @param config The browser configuration
- * @returns The updated browser configuration
- */
-export function ensureHeadfulConfig(config: any): any {
-  // Make a deep copy of the config
-  const updatedConfig = JSON.parse(JSON.stringify(config));
-  
-  // Set headless mode to false
-  updatedConfig.browser = updatedConfig.browser || {};
-  updatedConfig.browser.headless = false;
-  
-  // Remove headless args if they exist
-  updatedConfig.browser.args = updatedConfig.browser.args || [];
-  updatedConfig.browser.args = updatedConfig.browser.args.filter((arg: string) => !arg.includes('--headless'));
-  
-  // Update environment variables
-  updatedConfig.launchOptions = updatedConfig.launchOptions || {};
-  updatedConfig.launchOptions.env = updatedConfig.launchOptions.env || {};
-  delete updatedConfig.launchOptions.env.PUPPETEER_HEADLESS;
   
   return updatedConfig;
 }
