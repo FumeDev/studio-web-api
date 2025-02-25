@@ -67,10 +67,7 @@ app.post('/start_browser', async (req: Request, res: Response) => {
         let baseConfig = {
             ...StagehandConfig,  // Use all base config
             headless: false,  // Set headless mode directly
-            modelName: llmConfig.modelName,
-            modelClientOptions: {
-                apiKey: llmConfig.provider === 'anthropic' ? llmConfig.anthropicApiKey : llmConfig.openaiApiKey,
-            },
+            llm: llmConfig,  // Add LLM config properly
             env: "LOCAL",
             domSettleTimeoutMs: 30_000,
             logger: (message: any) => console.log(message),
