@@ -27,6 +27,12 @@ if [ -f .env ]; then
   export $(grep -v '^#' .env | xargs)
 fi
 
+# Print environment variable status
+echo "Environment Variables Status:"
+echo "ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:+set}${ANTHROPIC_API_KEY:-not set}"
+echo "OPENAI_API_KEY: ${OPENAI_API_KEY:+set}${OPENAI_API_KEY:-not set}"
+echo "DISPLAY: ${DISPLAY:-not set}"
+
 # Check if API keys are set
 if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
   echo "Warning: Neither ANTHROPIC_API_KEY nor OPENAI_API_KEY is set!"
