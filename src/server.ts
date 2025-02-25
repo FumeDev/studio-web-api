@@ -299,7 +299,7 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
         }
 
         // Use a platform-agnostic approach to list files with relative paths
-        const getFilesRecursively = (dir: string, baseDir: string, depth = 1, maxDepth = 3): string => {
+        const getFilesRecursively = (dir: string, depth = 1, maxDepth = 3): string => {
             if (depth > maxDepth) return '';
             
             let output = '';
@@ -308,8 +308,8 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                 
                 for (const entry of entries) {
                     const fullPath = path.join(dir, entry.name);
-                    // Convert to relative path from the base directory and add './' prefix
-                    const relativePath = './' + path.relative(baseDir, fullPath);
+                    // Get path relative to Documents directory
+                    const relativePath = './' + path.relative(documentsPath, fullPath);
                     // Skip the root directory (mindepth 1)
                     if (depth >= 1) {
                         output += relativePath + '\n';
@@ -317,7 +317,7 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
                     
                     if (entry.isDirectory()) {
                         try {
-                            output += getFilesRecursively(fullPath, baseDir, depth + 1, maxDepth);
+                            output += getFilesRecursively(fullPath, depth + 1, maxDepth);
                         } catch (err) {
                             // Skip directories we can't access
                             console.log(`Skipping inaccessible directory: ${fullPath}`);
@@ -341,7 +341,7 @@ app.get('/folder-tree', async (req: Request, res: Response) => {
             }
 
             // Get output as a single string with paths separated by newlines
-            const output = getFilesRecursively(targetPath, targetPath, 1, 3);
+            const output = getFilesRecursively(targetPath, 1, 3);
             
             // Match Python find command behavior: always return an object with empty string for empty results
             return res.json({
