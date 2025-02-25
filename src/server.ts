@@ -209,6 +209,10 @@ app.get('/screenshot', async (req: Request, res: Response) => {
             throw new Error("Browser not started");
         }
 
+        // Get current URL and title
+        const currentUrl = stagehand.page.url();
+        const currentTitle = await stagehand.page.title();
+
         // Capture only the current viewport
         const screenshotBuffer = await stagehand.page.screenshot({
             fullPage: false,
@@ -218,11 +222,17 @@ app.get('/screenshot', async (req: Request, res: Response) => {
             timeout: 5000
         });
 
-        res.writeHead(200, {
-            'Content-Type': 'image/png',
-            'Content-Length': screenshotBuffer.length
+        // Convert buffer to base64 string
+        const base64Image = screenshotBuffer.toString('base64');
+
+        res.json({
+            success: true,
+            data: base64Image,
+            encoding: 'base64',
+            mimeType: 'image/png',
+            current_url: currentUrl,
+            current_title: currentTitle
         });
-        res.end(screenshotBuffer);
 
     } catch (error: unknown) {
         console.error('Error taking screenshot:', error);
