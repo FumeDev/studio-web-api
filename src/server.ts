@@ -203,7 +203,7 @@ app.get("/screenshot", async (req: Request, res: Response) => {
       scale: "css",
       animations: "disabled",
       caret: "hide",
-      timeout: 5000,
+      timeout: 30000,
     });
 
     // Convert buffer to base64 string
