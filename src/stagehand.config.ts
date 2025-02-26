@@ -11,7 +11,7 @@ const StagehandConfig: ConstructorParams = {
     headless: false /* Run browser in headless mode */,
     logger: (message: LogLine) =>
         console.log(message) /* Custom logging function */,
-    domSettleTimeoutMs: 30_000 /* Timeout for DOM to settle in milliseconds */,
+    domSettleTimeoutMs: 300_000 /* Timeout for DOM to settle in milliseconds */,
     browserbaseSessionCreateParams: {
         projectId: process.env.BROWSERBASE_PROJECT_ID!,
     },

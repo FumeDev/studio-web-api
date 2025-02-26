@@ -71,7 +71,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
       headless: false, // Set headless mode directly
       llm: llmConfig, // Add LLM config properly
       env: "LOCAL",
-      domSettleTimeoutMs: 30_000,
+      domSettleTimeoutMs: 300_000,
       logger: (message: any) => console.log(message),
       debugDom: false,
     };
