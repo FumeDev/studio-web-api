@@ -94,7 +94,7 @@ async function initBrowser() {
       headless: false,
       llm: llmConfig,
       env: "LOCAL",
-      domSettleTimeoutMs: 30_000,
+      domSettleTimeoutMs: 300_000,
       logger: (message: any) => DEBUG ? console.log(message) : null,
       debugDom: DEBUG
     };

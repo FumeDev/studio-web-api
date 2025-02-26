@@ -71,7 +71,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
       headless: false, // Set headless mode directly
       llm: llmConfig, // Add LLM config properly
       env: "LOCAL",
-      domSettleTimeoutMs: 30_000,
+      domSettleTimeoutMs: 300_000,
       logger: (message: any) => console.log(message),
       debugDom: false,
     };
@@ -203,7 +203,7 @@ app.get("/screenshot", async (req: Request, res: Response) => {
       scale: "css",
       animations: "disabled",
       caret: "hide",
-      timeout: 5000,
+      timeout: 30000,
     });
 
     // Convert buffer to base64 string
