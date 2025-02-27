@@ -464,33 +464,56 @@ app.post("/create-seed-image", async (req: Request, res: Response) => {
     // Step 1: Remove any existing Docker image with the tag 'myhost'
     console.log("Removing existing Docker image if it exists...");
     try {
-      await execAsync('cd /home/fume && docker rmi -f myhost');
-      console.log("Removed existing Docker image");
+      const removeImageResult = await execAsync('cd /home/fume && docker rmi -f myhost');
+      console.log("Docker image removal output:", removeImageResult.stdout || "No output");
+      console.log("Docker image removal stderr:", removeImageResult.stderr || "No stderr");
     } catch (error) {
       // It's okay if this fails (e.g., if the image doesn't exist)
       console.log("No existing Docker image to remove or removal failed:", error);
     }
     
-    // Step 2: Create or update the tar archive
-    console.log("Creating/updating system tar archive...");
-    const tarCommand = `cd /home/fume && [ -f root.tar ] && sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -uf root.tar . || sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -cf root.tar .`;
+    // Step 2: Remove any existing tar archive to avoid duplicate path issues
+    console.log("Removing existing tar archive if it exists...");
+    try {
+      const removeTarResult = await execAsync('cd /home/fume && rm -f root.tar');
+      console.log("Tar removal output:", removeTarResult.stdout || "No output");
+      console.log("Tar removal stderr:", removeTarResult.stderr || "No stderr");
+    } catch (error) {
+      console.log("Error removing existing tar archive:", error);
+    }
+    
+    // Step 3: Create a fresh tar archive
+    console.log("Creating fresh system tar archive...");
+    const tarCommand = `cd /home/fume && sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -cf root.tar .`;
+    console.log("Executing tar command:", tarCommand);
     
     const tarResult = await execAsync(tarCommand);
-    console.log("Tar archive created/updated:", tarResult.stdout);
+    console.log("Tar archive created");
+    console.log("Tar stdout:", tarResult.stdout || "No stdout");
+    console.log("Tar stderr:", tarResult.stderr || "No stderr");
     
-    // Step 3: Import the tar archive as a Docker image
+    // Step 4: Import the tar archive as a Docker image
     console.log("Importing tar archive as Docker image...");
     const importCommand = `cd /home/fume && cat root.tar | docker import - myhost:latest`;
+    console.log("Executing import command:", importCommand);
     
     const importResult = await execAsync(importCommand);
-    console.log("Docker image created:", importResult.stdout);
+    console.log("Docker image created");
+    console.log("Import stdout:", importResult.stdout || "No stdout");
+    console.log("Import stderr:", importResult.stderr || "No stderr");
     
     return res.json({
       success: true,
       message: "Seed image created successfully",
       details: {
-        tarOutput: tarResult.stdout,
-        importOutput: importResult.stdout
+        tarOutput: {
+          stdout: tarResult.stdout || "",
+          stderr: tarResult.stderr || ""
+        },
+        importOutput: {
+          stdout: importResult.stdout || "",
+          stderr: importResult.stderr || ""
+        }
       }
     });
   } catch (error: unknown) {
