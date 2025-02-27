@@ -484,7 +484,7 @@ app.post("/create-seed-image", async (req: Request, res: Response) => {
     
     // Step 3: Create a fresh tar archive
     console.log("Creating fresh system tar archive...");
-    const tarCommand = `cd /home/fume && sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -cf root.tar .`;
+    const tarCommand = `cd /home/fume && sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -cf /home/fume/root.tar /`;
     console.log("Executing tar command:", tarCommand);
     
     const tarResult = await execAsync(tarCommand);
