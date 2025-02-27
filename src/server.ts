@@ -456,6 +456,53 @@ app.post("/find-repo", async (req: express.Request, res: express.Response) => {
   }
 });
 
+// ---- 7. Create Seed Image Endpoint ----
+app.post("/create-seed-image", async (req: Request, res: Response) => {
+  try {
+    console.log("Starting seed image creation process...");
+    
+    // Step 1: Remove any existing Docker image with the tag 'myhost'
+    console.log("Removing existing Docker image if it exists...");
+    try {
+      await execAsync('cd /home/fume && docker rmi -f myhost');
+      console.log("Removed existing Docker image");
+    } catch (error) {
+      // It's okay if this fails (e.g., if the image doesn't exist)
+      console.log("No existing Docker image to remove or removal failed:", error);
+    }
+    
+    // Step 2: Create or update the tar archive
+    console.log("Creating/updating system tar archive...");
+    const tarCommand = `cd /home/fume && [ -f root.tar ] && sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -uf root.tar . || sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -cf root.tar .`;
+    
+    const tarResult = await execAsync(tarCommand);
+    console.log("Tar archive created/updated:", tarResult.stdout);
+    
+    // Step 3: Import the tar archive as a Docker image
+    console.log("Importing tar archive as Docker image...");
+    const importCommand = `cd /home/fume && cat root.tar | docker import - myhost:latest`;
+    
+    const importResult = await execAsync(importCommand);
+    console.log("Docker image created:", importResult.stdout);
+    
+    return res.json({
+      success: true,
+      message: "Seed image created successfully",
+      details: {
+        tarOutput: tarResult.stdout,
+        importOutput: importResult.stdout
+      }
+    });
+  } catch (error: unknown) {
+    console.error("Error creating seed image:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
 // ---- Server Listen ----
 const PORT = process.env.PORT || 5553;
 app.listen(PORT, () => {
