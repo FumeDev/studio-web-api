@@ -535,8 +535,8 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       sshDomain, 
       apiDomain, 
       vncDomain,
-      task_id,
-      parent_task_id
+      taskId,
+      parentTaskId
     } = req.body;
     
     // Validate all required parameters
@@ -554,16 +554,16 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       });
     }
     
-    if (!task_id) {
+    if (!taskId) {
       return res.status(400).json({
         success: false,
-        error: "task_id parameter is required"
+        error: "taskId parameter is required"
       });
     }
     
     console.log(`Creating minion with ID: ${id}`);
     console.log(`Using domains: SSH=${sshDomain}, API=${apiDomain}, VNC=${vncDomain}`);
-    console.log(`Task ID: ${task_id}, Parent Task ID: ${parent_task_id || 'None'}`);
+    console.log(`Task ID: ${taskId}, Parent Task ID: ${parentTaskId || 'None'}`);
     
     // Initialize Docker client
     const docker = new Docker();
@@ -600,10 +600,10 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       [`traefik.http.services.vnc-service-${containerName}.loadbalancer.server.port`]: "6080"
     };
     
-    // Determine source directory for rsync based on parent_task_id
-    const targetDir = `/home/fume/FumeData/${task_id}`;
-    const sourceDir = parent_task_id 
-      ? `/home/fume/FumeData/${parent_task_id}`
+    // Determine source directory for rsync based on parentTaskId
+    const targetDir = `/home/fume/FumeData/${taskId}`;
+    const sourceDir = parentTaskId 
+      ? `/home/fume/FumeData/${parentTaskId}`
       : '/home/fume/Documents';
     
     // Create the target directory if it doesn't exist
@@ -654,8 +654,8 @@ app.post("/create-minion", async (req: Request, res: Response) => {
           api: `https://${apiDomain}`,
           vnc: `https://${vncDomain}`
         },
-        task_id,
-        parent_task_id: parent_task_id || null,
+        taskId,
+        parentTaskId: parentTaskId || null,
         rsync_output: rsyncResult.stdout
       }
     });
