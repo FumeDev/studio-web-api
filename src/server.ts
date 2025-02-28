@@ -594,7 +594,12 @@ app.post("/create-minion", async (req: Request, res: Response) => {
     const container = await docker.createContainer({
       name: containerName,
       Image: 'myhost:latest',
-      Cmd: ['sleep', 'infinity'],
+      // Use a shell to execute multiple commands
+      Cmd: [
+        '/bin/bash', 
+        '-c', 
+        'sudo /usr/sbin/sshd && sudo mkdir -p /tmp && sudo chmod 1777 /tmp && sudo su - fume -c "vncserver -kill :1; vncserver :1; pkill -f \\"novnc_proxy\\"; nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /dev/null 2>&1 &" && sleep infinity'
+      ],
       Labels: labels,
       HostConfig: {
         NetworkMode: 'seed-net'
