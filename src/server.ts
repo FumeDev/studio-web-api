@@ -8,6 +8,7 @@ import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
 import dotenv from "dotenv";
+import Docker from 'dockerode';
 
 dotenv.config();
 
@@ -518,6 +519,108 @@ app.post("/create-seed-image", async (req: Request, res: Response) => {
     });
   } catch (error: unknown) {
     console.error("Error creating seed image:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- 8. Create Minion Endpoint ----
+app.post("/create-minion", async (req: Request, res: Response) => {
+  try {
+    const { 
+      id, 
+      sshDomain, 
+      apiDomain, 
+      vncDomain 
+    } = req.body;
+    
+    // Validate all required parameters
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "ID parameter is required"
+      });
+    }
+    
+    if (!sshDomain || !apiDomain || !vncDomain) {
+      return res.status(400).json({
+        success: false,
+        error: "All domain parameters (sshDomain, apiDomain, vncDomain) are required"
+      });
+    }
+    
+    console.log(`Creating minion with ID: ${id}`);
+    console.log(`Using domains: SSH=${sshDomain}, API=${apiDomain}, VNC=${vncDomain}`);
+    
+    // Initialize Docker client
+    const docker = new Docker();
+    
+    // Container name based on ID
+    const containerName = `branch${id}`;
+    
+    // Configure labels for Traefik routing
+    const labels = {
+      "traefik.enable": "true",
+      
+      // SSH routing
+      [`traefik.tcp.routers.ssh-router-${containerName}.rule`]: `HostSNI(\`${sshDomain}\`)`,
+      [`traefik.tcp.routers.ssh-router-${containerName}.entryPoints`]: "ssh",
+      [`traefik.tcp.routers.ssh-router-${containerName}.tls`]: "true",
+      [`traefik.tcp.routers.ssh-router-${containerName}.tls.certresolver`]: "myresolver",
+      [`traefik.tcp.routers.ssh-router-${containerName}.service`]: `ssh-service-${containerName}`,
+      [`traefik.tcp.services.ssh-service-${containerName}.loadbalancer.server.port`]: "22",
+      
+      // API routing
+      [`traefik.http.routers.api-router-${containerName}.rule`]: `Host(\`${apiDomain}\`)`,
+      [`traefik.http.routers.api-router-${containerName}.entryPoints`]: "websecure",
+      [`traefik.http.routers.api-router-${containerName}.tls`]: "true",
+      [`traefik.http.routers.api-router-${containerName}.tls.certresolver`]: "myresolver",
+      [`traefik.http.routers.api-router-${containerName}.service`]: `api-service-${containerName}`,
+      [`traefik.http.services.api-service-${containerName}.loadbalancer.server.port`]: "5553",
+      
+      // VNC routing
+      [`traefik.http.routers.vnc-router-${containerName}.rule`]: `Host(\`${vncDomain}\`)`,
+      [`traefik.http.routers.vnc-router-${containerName}.entryPoints`]: "websecure",
+      [`traefik.http.routers.vnc-router-${containerName}.tls`]: "true",
+      [`traefik.http.routers.vnc-router-${containerName}.tls.certresolver`]: "myresolver",
+      [`traefik.http.routers.vnc-router-${containerName}.service`]: `vnc-service-${containerName}`,
+      [`traefik.http.services.vnc-service-${containerName}.loadbalancer.server.port`]: "6080"
+    };
+    
+    // Create container with the specified configuration
+    const container = await docker.createContainer({
+      name: containerName,
+      Image: 'myhost:latest',
+      Cmd: ['sleep', 'infinity'],
+      Labels: labels,
+      HostConfig: {
+        NetworkMode: 'seed-net'
+      }
+    });
+    
+    // Start the container
+    await container.start();
+    
+    console.log(`Minion container ${containerName} created and started successfully`);
+    
+    return res.json({
+      success: true,
+      message: `Minion container created successfully`,
+      container: {
+        id: container.id,
+        name: containerName,
+        endpoints: {
+          ssh: `ssh://${sshDomain}`,
+          api: `https://${apiDomain}`,
+          vnc: `https://${vncDomain}`
+        }
+      }
+    });
+  } catch (error: unknown) {
+    console.error("Error creating minion container:", error);
     return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
