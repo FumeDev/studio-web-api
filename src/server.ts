@@ -534,7 +534,9 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       id, 
       sshDomain, 
       apiDomain, 
-      vncDomain 
+      vncDomain,
+      task_id,
+      parent_task_id
     } = req.body;
     
     // Validate all required parameters
@@ -552,8 +554,16 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       });
     }
     
+    if (!task_id) {
+      return res.status(400).json({
+        success: false,
+        error: "task_id parameter is required"
+      });
+    }
+    
     console.log(`Creating minion with ID: ${id}`);
     console.log(`Using domains: SSH=${sshDomain}, API=${apiDomain}, VNC=${vncDomain}`);
+    console.log(`Task ID: ${task_id}, Parent Task ID: ${parent_task_id || 'None'}`);
     
     // Initialize Docker client
     const docker = new Docker();
@@ -590,11 +600,27 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       [`traefik.http.services.vnc-service-${containerName}.loadbalancer.server.port`]: "6080"
     };
     
+    // Determine source directory for rsync based on parent_task_id
+    const targetDir = `/home/fume/FumeData/${task_id}`;
+    const sourceDir = parent_task_id 
+      ? `/home/fume/FumeData/${parent_task_id}`
+      : '/home/fume/Documents';
+    
+    // Create the target directory if it doesn't exist
+    await execAsync(`sudo mkdir -p ${targetDir}`);
+    
+    // Ensure proper ownership
+    await execAsync(`sudo chown -R fume:fume ${targetDir}`);
+    
+    // Execute rsync to copy files
+    console.log(`Copying files from ${sourceDir} to ${targetDir}...`);
+    const rsyncResult = await execAsync(`rsync -a --info=progress2 --no-compress ${sourceDir}/ ${targetDir}/`);
+    console.log('Rsync completed:', rsyncResult.stdout);
+    
     // Create container with the specified configuration
     const container = await docker.createContainer({
       name: containerName,
       Image: 'myhost:latest',
-      // Use a shell to execute multiple commands with step-by-step debugging
       Cmd: [
         '/bin/bash', 
         '-c', 
@@ -605,7 +631,10 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       ],
       Labels: labels,
       HostConfig: {
-        NetworkMode: 'seed-net'
+        NetworkMode: 'seed-net',
+        Binds: [
+          `${targetDir}:/home/fume/Documents:rw`
+        ]
       }
     });
     
@@ -624,7 +653,10 @@ app.post("/create-minion", async (req: Request, res: Response) => {
           ssh: `ssh://${sshDomain}`,
           api: `https://${apiDomain}`,
           vnc: `https://${vncDomain}`
-        }
+        },
+        task_id,
+        parent_task_id: parent_task_id || null,
+        rsync_output: rsyncResult.stdout
       }
     });
   } catch (error: unknown) {
