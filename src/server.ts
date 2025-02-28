@@ -606,17 +606,27 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       ? `/home/fume/FumeData/${parentTaskId}`
       : '/home/fume/Documents';
     
-    // Create the target directory if it doesn't exist
-    await execAsync(`sudo mkdir -p ${targetDir}`);
+    // Variable to store rsync status
+    let rsyncStatus = "completed";
     
-    // Ensure proper ownership
-    await execAsync(`sudo chown -R fume:fume ${targetDir}`);
-    
-    // Execute rsync to copy files
+    // Execute rsync to copy files with increased buffer size and reduced output
     console.log(`Copying files from ${sourceDir} to ${targetDir}...`);
-    const rsyncResult = await execAsync(`rsync -a --info=progress2 --no-compress ${sourceDir}/ ${targetDir}/`);
-    console.log('Rsync completed:', rsyncResult.stdout);
-    
+    try {
+      // First create the target directory and set permissions
+      await execAsync(`sudo mkdir -p ${targetDir}`);
+      await execAsync(`sudo chown -R fume:fume ${targetDir}`);
+      
+      // Use --quiet to reduce output and increase maxBuffer
+      await execAsync(
+        `rsync -a --quiet ${sourceDir}/ ${targetDir}/`, 
+        { maxBuffer: 10 * 1024 * 1024 } // 10MB buffer
+      );
+      console.log('Rsync completed successfully');
+    } catch (rsyncError: unknown) {
+      console.warn('Rsync encountered some errors but will continue:', (rsyncError as Error).message);
+      rsyncStatus = "completed with errors";
+      // Continue with container creation even if rsync had some errors
+    }
     // Create container with the specified configuration
     const container = await docker.createContainer({
       name: containerName,
@@ -656,7 +666,7 @@ app.post("/create-minion", async (req: Request, res: Response) => {
         },
         taskId,
         parentTaskId: parentTaskId || null,
-        rsync_output: rsyncResult.stdout
+        rsync_output: rsyncStatus
       }
     });
   } catch (error: unknown) {
