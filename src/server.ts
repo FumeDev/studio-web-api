@@ -594,11 +594,31 @@ app.post("/create-minion", async (req: Request, res: Response) => {
     const container = await docker.createContainer({
       name: containerName,
       Image: 'myhost:latest',
-      // Use a shell to execute multiple commands with minimal changes to fix termination
+      // Use a shell to execute multiple commands with step-by-step debugging
       Cmd: [
         '/bin/bash', 
         '-c', 
-        'sudo /usr/sbin/sshd && sudo mkdir -p /tmp && sudo chmod 1777 /tmp && sudo -u fume bash -c "vncserver -kill :1 || true; sleep 2; vncserver :1; sleep 2; sudo pkill -f \\"novnc_proxy\\" || true; sleep 2; nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /dev/null 2>&1 &" && sleep infinity'
+        'sudo /usr/sbin/sshd && ' +
+        'sudo mkdir -p /tmp && ' +
+        'sudo chmod 1777 /tmp && ' +
+        'sudo -u fume bash -c "' +
+          'echo \'STEP 1: Killing any existing VNC server\' && ' +
+          'vncserver -kill :1 || true && ' +
+          'echo \'STEP 1 COMPLETE\' && ' +
+          'sleep 2 && ' +
+          'echo \'STEP 2: Starting new VNC server\' && ' +
+          'vncserver :1 && ' +
+          'echo \'STEP 2 COMPLETE\' && ' +
+          'sleep 2 && ' +
+          'echo \'STEP 3: Killing any existing novnc_proxy\' && ' +
+          'sudo pkill -f \"novnc_proxy\" || true && ' +
+          'echo \'STEP 3 COMPLETE\' && ' +
+          'sleep 2 && ' +
+          'echo \'STEP 4: Starting websockify\' && ' +
+          'nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /dev/null 2>&1 & ' +
+          'echo \'STEP 4 COMPLETE\'" && ' +
+        'echo \'STEP 5: Starting sleep infinity\' && ' +
+        'sleep infinity'
       ],
       Labels: labels,
       HostConfig: {
