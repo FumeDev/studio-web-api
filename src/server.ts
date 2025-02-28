@@ -594,11 +594,11 @@ app.post("/create-minion", async (req: Request, res: Response) => {
     const container = await docker.createContainer({
       name: containerName,
       Image: 'myhost:latest',
-      // Use a shell to execute multiple commands with better error handling and sudo
+      // Use a shell to execute multiple commands with minimal changes to fix termination
       Cmd: [
         '/bin/bash', 
         '-c', 
-        'sudo /usr/sbin/sshd && sudo mkdir -p /tmp && sudo chmod 1777 /tmp && sudo -u fume bash -c "vncserver -kill :1 || true; sleep 2;  vncserver :1; sudo pkill -f \\"novnc_proxy\\" || true; sleep 2; sudo nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /dev/null 2>&1 &" && sudo sleep infinity'
+        'sudo /usr/sbin/sshd && sudo mkdir -p /tmp && sudo chmod 1777 /tmp && sudo -u fume bash -c "vncserver -kill :1 || true; sleep 2; vncserver :1; sleep 2; pkill -f \\"novnc_proxy\\" || true; sleep 2; nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /home/fume/websockify.log 2>&1 &" && sleep infinity'
       ],
       Labels: labels,
       HostConfig: {
