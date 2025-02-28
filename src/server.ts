@@ -598,7 +598,7 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       Cmd: [
         '/bin/bash', 
         '-c', 
-        'sudo /usr/sbin/sshd && sudo mkdir -p /tmp && sudo chmod 1777 /tmp && sudo -u fume bash -c "sudo vncserver -kill :1 || true; sleep 2; sudo vncserver :1; sudo pkill -f \\"novnc_proxy\\" || true; sleep 2; sudo nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /dev/null 2>&1 &" && sudo sleep infinity'
+        'sudo /usr/sbin/sshd && sudo mkdir -p /tmp && sudo chmod 1777 /tmp && sudo -u fume bash -c "vncserver -kill :1 || true; sleep 2;  vncserver :1; sudo pkill -f \\"novnc_proxy\\" || true; sleep 2; sudo nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /dev/null 2>&1 &" && sudo sleep infinity'
       ],
       Labels: labels,
       HostConfig: {
