@@ -601,23 +601,6 @@ app.post("/create-minion", async (req: Request, res: Response) => {
         'sudo /usr/sbin/sshd && ' +
         'sudo mkdir -p /tmp && ' +
         'sudo chmod 1777 /tmp && ' +
-        'sudo -u fume bash -c "' +
-          'echo \'STEP 1: Killing any existing VNC server\' && ' +
-          'vncserver -kill :1 || true && ' +
-          'echo \'STEP 1 COMPLETE\' && ' +
-          'sleep 2 && ' +
-          'echo \'STEP 2: Starting new VNC server\' && ' +
-          'vncserver :1 && ' +
-          'echo \'STEP 2 COMPLETE\' && ' +
-          'sleep 2 && ' +
-          'echo \'STEP 3: Killing any existing novnc_proxy\' && ' +
-          'sudo pkill -f \"novnc_proxy\" || true && ' +
-          'echo \'STEP 3 COMPLETE\' && ' +
-          'sleep 2 && ' +
-          'echo \'STEP 4: Starting websockify\' && ' +
-          'nohup websockify --web /usr/share/novnc/ 6080 localhost:5901 > /dev/null 2>&1 & ' +
-          'echo \'STEP 4 COMPLETE\'" && ' +
-        'echo \'STEP 5: Starting sleep infinity\' && ' +
         'sleep infinity'
       ],
       Labels: labels,
