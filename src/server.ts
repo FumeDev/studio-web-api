@@ -600,33 +600,45 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       [`traefik.http.services.vnc-service-${containerName}.loadbalancer.server.port`]: "6080"
     };
     
-    // Determine source directory for rsync based on parentTaskId
+    // Determine source directory for btrfs snapshot based on parentTaskId
     const targetDir = `/home/fume/FumeData/${taskId}`;
     const sourceDir = parentTaskId 
       ? `/home/fume/FumeData/${parentTaskId}`
       : '/home/fume/Documents';
     
-    // Variable to store rsync status
-    let rsyncStatus = "completed";
+    // Variable to store snapshot status
+    let snapshotStatus = "completed";
     
-    // Execute rsync to copy files with increased buffer size and reduced output
-    console.log(`Copying files from ${sourceDir} to ${targetDir}...`);
+    // Execute btrfs subvolume snapshot for fast copying
+    console.log(`Creating btrfs snapshot from ${sourceDir} to ${targetDir}...`);
     try {
-      // First create the target directory and set permissions
-      await execAsync(`sudo mkdir -p ${targetDir}`);
-      await execAsync(`sudo chown -R fume:fume ${targetDir}`);
+      // Use btrfs subvolume snapshot command
+      await execAsync(`sudo btrfs subvolume snapshot ${sourceDir} ${targetDir}`);
+      console.log('Btrfs snapshot created successfully');
+    } catch (snapshotError: unknown) {
+      console.warn('Snapshot creation encountered errors but will continue:', (snapshotError as Error).message);
+      snapshotStatus = "completed with errors";
       
-      // Use --quiet to reduce output and increase maxBuffer
-      await execAsync(
-        `rsync -a --quiet ${sourceDir}/ ${targetDir}/`, 
-        { maxBuffer: 10 * 1024 * 1024 } // 10MB buffer
-      );
-      console.log('Rsync completed successfully');
-    } catch (rsyncError: unknown) {
-      console.warn('Rsync encountered some errors but will continue:', (rsyncError as Error).message);
-      rsyncStatus = "completed with errors";
-      // Continue with container creation even if rsync had some errors
+      // Fall back to rsync if btrfs snapshot fails
+      try {
+        console.log('Falling back to rsync...');
+        // First create the target directory and set permissions
+        await execAsync(`sudo mkdir -p ${targetDir}`);
+        await execAsync(`sudo chown -R fume:fume ${targetDir}`);
+        
+        // Use rsync as fallback
+        await execAsync(
+          `rsync -a --quiet ${sourceDir}/ ${targetDir}/`, 
+          { maxBuffer: 10 * 1024 * 1024 } // 10MB buffer
+        );
+        console.log('Rsync fallback completed successfully');
+      } catch (rsyncError: unknown) {
+        console.warn('Rsync fallback also failed:', (rsyncError as Error).message);
+        snapshotStatus = "failed";
+        // Continue with container creation even if copying failed
+      }
     }
+    
     // Create container with the specified configuration
     const container = await docker.createContainer({
       name: containerName,
@@ -666,7 +678,7 @@ app.post("/create-minion", async (req: Request, res: Response) => {
         },
         taskId,
         parentTaskId: parentTaskId || null,
-        rsync_output: rsyncStatus
+        snapshot_output: snapshotStatus
       }
     });
   } catch (error: unknown) {
