@@ -691,6 +691,100 @@ app.post("/create-minion", async (req: Request, res: Response) => {
   }
 });
 
+// ---- 9. Delete Minion Endpoint ----
+app.post("/delete-minion", async (req: Request, res: Response) => {
+  try {
+    const { 
+      id,
+      taskId,
+      removeData = false // Optional parameter to remove the data directory
+    } = req.body;
+    
+    // Validate required parameters
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "ID parameter is required"
+      });
+    }
+    
+    console.log(`Deleting minion with ID: ${id}`);
+    
+    // Initialize Docker client
+    const docker = new Docker();
+    
+    // Container name based on ID
+    const containerName = `branch${id}`;
+    
+    try {
+      // Get container reference
+      const container = docker.getContainer(containerName);
+      
+      // Check if container exists by getting its info
+      await container.inspect();
+      
+      // Stop the container if it's running
+      console.log(`Stopping container ${containerName}...`);
+      await container.stop().catch(err => {
+        // Ignore error if container is already stopped
+        console.log(`Container ${containerName} may already be stopped:`, err.message);
+      });
+      
+      // Remove the container
+      console.log(`Removing container ${containerName}...`);
+      await container.remove();
+      
+      console.log(`Container ${containerName} removed successfully`);
+      
+      // Optionally remove the data directory
+      if (removeData && taskId) {
+        const dataDir = `/home/fume/FumeData/${taskId}`;
+        console.log(`Removing data directory ${dataDir}...`);
+        
+        try {
+          // Check if it's a btrfs subvolume first
+          const isSubvolume = await execAsync(`sudo btrfs subvolume show ${dataDir}`).then(() => true).catch(() => false);
+          
+          if (isSubvolume) {
+            // Delete the btrfs subvolume
+            await execAsync(`sudo btrfs subvolume delete ${dataDir}`);
+          } else {
+            // Regular directory removal
+            await execAsync(`sudo rm -rf ${dataDir}`);
+          }
+          
+          console.log(`Data directory ${dataDir} removed successfully`);
+        } catch (dirError: unknown) {
+          console.warn(`Error removing data directory: ${(dirError as Error).message}`);
+          // Continue even if directory removal fails
+        }
+      }
+      
+      return res.json({
+        success: true,
+        message: `Minion container ${containerName} deleted successfully`,
+        dataRemoved: removeData && taskId ? true : false
+      });
+    } catch (containerError: unknown) {
+      // If container doesn't exist or other Docker error
+      console.error(`Error with container ${containerName}:`, (containerError as Error).message);
+      
+      return res.status(404).json({
+        success: false,
+        error: `Container ${containerName} not found or could not be accessed`,
+        details: (containerError as Error).message
+      });
+    }
+  } catch (error: unknown) {
+    console.error("Error deleting minion container:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
 // ---- Server Listen ----
 const PORT = process.env.PORT || 5553;
 app.listen(PORT, () => {
