@@ -579,7 +579,7 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       [`traefik.tcp.routers.ssh-router-${containerName}.rule`]: `HostSNI(\`${sshDomain}\`)`,
       [`traefik.tcp.routers.ssh-router-${containerName}.entryPoints`]: "ssh",
       [`traefik.tcp.routers.ssh-router-${containerName}.tls`]: "true",
-      [`traefik.tcp.routers.ssh-router-${containerName}.tls.certresolver`]: "myresolver",
+      [`traefik.tcp.routers.ssh-router-${containerName}.tls.certresolver`]: "zerosslResolver",
       [`traefik.tcp.routers.ssh-router-${containerName}.service`]: `ssh-service-${containerName}`,
       [`traefik.tcp.services.ssh-service-${containerName}.loadbalancer.server.port`]: "22",
       
@@ -587,7 +587,7 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       [`traefik.http.routers.api-router-${containerName}.rule`]: `Host(\`${apiDomain}\`)`,
       [`traefik.http.routers.api-router-${containerName}.entryPoints`]: "websecure",
       [`traefik.http.routers.api-router-${containerName}.tls`]: "true",
-      [`traefik.http.routers.api-router-${containerName}.tls.certresolver`]: "myresolver",
+      [`traefik.http.routers.api-router-${containerName}.tls.certresolver`]: "zerosslResolver",
       [`traefik.http.routers.api-router-${containerName}.service`]: `api-service-${containerName}`,
       [`traefik.http.services.api-service-${containerName}.loadbalancer.server.port`]: "5553",
       
@@ -595,7 +595,7 @@ app.post("/create-minion", async (req: Request, res: Response) => {
       [`traefik.http.routers.vnc-router-${containerName}.rule`]: `Host(\`${vncDomain}\`)`,
       [`traefik.http.routers.vnc-router-${containerName}.entryPoints`]: "websecure",
       [`traefik.http.routers.vnc-router-${containerName}.tls`]: "true",
-      [`traefik.http.routers.vnc-router-${containerName}.tls.certresolver`]: "myresolver",
+      [`traefik.http.routers.vnc-router-${containerName}.tls.certresolver`]: "zerosslResolver",
       [`traefik.http.routers.vnc-router-${containerName}.service`]: `vnc-service-${containerName}`,
       [`traefik.http.services.vnc-service-${containerName}.loadbalancer.server.port`]: "6080"
     };
