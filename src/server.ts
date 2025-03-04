@@ -493,35 +493,24 @@ app.post("/create-seed-image", async (req: Request, res: Response) => {
     console.log("Tar stdout:", tarResult.stdout || "No stdout");
     console.log("Tar stderr:", tarResult.stderr || "No stderr");
     
-    // Step 4: Create a Dockerfile
-    console.log("Creating Dockerfile...");
-    const dockerfileContent = `FROM ubuntu:20.04
+    // Step 4: Import the tar archive as a Docker image
+    console.log("Importing tar archive as Docker image...");
+    const importCommand = `cd /home/fume && cat root.tar | docker import --change "CMD [\"/sbin/init\"]" - myhost:latest`;
+    console.log("Executing import command:", importCommand);
 
-# Copy the tar file into the image build context
-COPY root.tar /tmp/root.tar
+    const importResult = await execAsync(importCommand);
+    console.log("Docker image created");
+    console.log("Import stdout:", importResult.stdout || "No stdout");
+    console.log("Import stderr:", importResult.stderr || "No stderr");
 
-# Extract, excluding folders that can break or conflict
-RUN tar --exclude=/proc --exclude=/sys --exclude=/dev \\
-        -xf /tmp/root.tar -C / \\
-    && rm -f /tmp/root.tar
+    // Remove the large tar file after import is complete
+    try {
+      await execAsync('cd /home/fume && rm -f root.tar');
+      console.log("Removed tar file after successful import");
+    } catch (rmError) {
+      console.log("Note: Failed to remove tar file after import:", rmError);
+    }
 
-# Set the default command to run systemd as PID 1
-CMD ["/sbin/init"]
-`;
-    
-    await fs.promises.writeFile('/home/fume/Dockerfile', dockerfileContent);
-    console.log("Dockerfile created");
-    
-    // Step 5: Build the Docker image
-    console.log("Building Docker image...");
-    const buildCommand = `cd /home/fume && docker build -t myhost:latest .`;
-    console.log("Executing build command:", buildCommand);
-    
-    const buildResult = await execAsync(buildCommand, { maxBuffer: 10 * 1024 * 1024 }); // 10MB buffer
-    console.log("Docker image built");
-    console.log("Build stdout:", buildResult.stdout || "No stdout");
-    console.log("Build stderr:", buildResult.stderr || "No stderr");
-    
     return res.json({
       success: true,
       message: "Seed image created successfully",
@@ -530,9 +519,9 @@ CMD ["/sbin/init"]
           stdout: tarResult.stdout || "",
           stderr: tarResult.stderr || ""
         },
-        buildOutput: {
-          stdout: buildResult.stdout || "",
-          stderr: buildResult.stderr || ""
+        importOutput: {
+          stdout: importResult.stdout || "",
+          stderr: importResult.stderr || ""
         }
       }
     });
