@@ -493,15 +493,34 @@ app.post("/create-seed-image", async (req: Request, res: Response) => {
     console.log("Tar stdout:", tarResult.stdout || "No stdout");
     console.log("Tar stderr:", tarResult.stderr || "No stderr");
     
-    // Step 4: Import the tar archive as a Docker image
-    console.log("Importing tar archive as Docker image...");
-    const importCommand = `cd /home/fume && cat root.tar | docker import - myhost:latest`;
-    console.log("Executing import command:", importCommand);
+    // Step 4: Create a Dockerfile
+    console.log("Creating Dockerfile...");
+    const dockerfileContent = `FROM ubuntu:20.04
+
+# Copy the tar file into the image build context
+COPY root.tar /tmp/root.tar
+
+# Extract, excluding folders that can break or conflict
+RUN tar --exclude=/proc --exclude=/sys --exclude=/dev \\
+        -xf /tmp/root.tar -C / \\
+    && rm -f /tmp/root.tar
+
+# Set the default command to run systemd as PID 1
+CMD ["/sbin/init"]
+`;
     
-    const importResult = await execAsync(importCommand);
-    console.log("Docker image created");
-    console.log("Import stdout:", importResult.stdout || "No stdout");
-    console.log("Import stderr:", importResult.stderr || "No stderr");
+    await fs.promises.writeFile('/home/fume/Dockerfile', dockerfileContent);
+    console.log("Dockerfile created");
+    
+    // Step 5: Build the Docker image
+    console.log("Building Docker image...");
+    const buildCommand = `cd /home/fume && docker build -t myhost:latest .`;
+    console.log("Executing build command:", buildCommand);
+    
+    const buildResult = await execAsync(buildCommand, { maxBuffer: 10 * 1024 * 1024 }); // 10MB buffer
+    console.log("Docker image built");
+    console.log("Build stdout:", buildResult.stdout || "No stdout");
+    console.log("Build stderr:", buildResult.stderr || "No stderr");
     
     return res.json({
       success: true,
@@ -511,9 +530,9 @@ app.post("/create-seed-image", async (req: Request, res: Response) => {
           stdout: tarResult.stdout || "",
           stderr: tarResult.stderr || ""
         },
-        importOutput: {
-          stdout: importResult.stdout || "",
-          stderr: importResult.stderr || ""
+        buildOutput: {
+          stdout: buildResult.stdout || "",
+          stderr: buildResult.stderr || ""
         }
       }
     });
@@ -643,27 +662,49 @@ app.post("/create-minion", async (req: Request, res: Response) => {
     const container = await docker.createContainer({
       name: containerName,
       Image: 'myhost:latest',
-      Cmd: [
-        '/bin/bash', 
-        '-c', 
-        'sudo /usr/sbin/sshd && ' +
-        'sudo mkdir -p /tmp && ' +
-        'sudo chmod 1777 /tmp && ' +
-        'sleep infinity'
-      ],
       Labels: labels,
       HostConfig: {
         NetworkMode: 'seed-net',
         Binds: [
-          `${targetDir}:/home/fume/Documents:rw`
-        ]
+          `${targetDir}:/home/fume/Documents:rw`,
+          // Mount cgroup filesystem for systemd
+          "/sys/fs/cgroup:/sys/fs/cgroup:ro"
+        ],
+        Privileged: true, // Required for systemd to work properly
+        SecurityOpt: ["seccomp=unconfined"] // May be needed for some systemd operations
       }
     });
     
     // Start the container
     await container.start();
+    console.log(`Minion container ${containerName} started successfully`);
     
-    console.log(`Minion container ${containerName} created and started successfully`);
+    // Execute commands to ensure services are running
+    console.log(`Starting services in container ${containerName}...`);
+    try {
+      // Start SSH service
+      const sshExec = await container.exec({
+        Cmd: ['/bin/bash', '-c', 'sudo systemctl start ssh'],
+        AttachStdout: true,
+        AttachStderr: true
+      });
+      await sshExec.start({});
+      
+      // Ensure /tmp has correct permissions
+      const tmpExec = await container.exec({
+        Cmd: ['/bin/bash', '-c', 'sudo mkdir -p /tmp && sudo chmod 1777 /tmp'],
+        AttachStdout: true,
+        AttachStderr: true
+      });
+      await tmpExec.start({});
+      
+      console.log(`Services started successfully in container ${containerName}`);
+    } catch (serviceError: unknown) {
+      console.warn(`Warning: Error starting services in container: ${(serviceError as Error).message}`);
+      // Continue even if service startup has issues
+    }
+    
+    console.log(`Minion container ${containerName} created and configured successfully`);
     
     return res.json({
       success: true,
