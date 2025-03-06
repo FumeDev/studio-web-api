@@ -34,12 +34,22 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // ---- 1. Start Browser Endpoint ----
 app.post("/start_browser", async (req: Request, res: Response) => {
   try {
-    // If browser is already running, just return success
+    // If browser is already running, check if it's still responsive
     if (stagehand?.page) {
-      return res.json({
-        success: true,
-        message: "Using existing browser session",
-      });
+      try {
+        // Test if the browser is still responsive by evaluating a simple expression
+        await stagehand.page.evaluate(() => true);
+        // If we got here, the browser is still responsive
+        return res.json({
+          success: true,
+          message: "Using existing browser session",
+        });
+      } catch (error) {
+        console.log("Existing browser session is no longer responsive, starting a new one");
+        // Clean up the stale reference
+        stagehand = null;
+        currentConfig = null;
+      }
     }
 
     // Build LLM config based on environment variables
