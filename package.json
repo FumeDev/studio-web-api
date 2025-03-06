@@ -17,12 +17,14 @@
     "boxen": "^8.0.1",
     "browser-use": "^0.0.1",
     "chalk": "^5.3.0",
+    "dockerode": "^3.3.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "pm2": "^5.4.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/dockerode": "^3.3.35",
     "nodemon": "^3.1.9",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.2",

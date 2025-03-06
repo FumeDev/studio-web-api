@@ -8,6 +8,7 @@ import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
 import dotenv from "dotenv";
+import Docker from 'dockerode';
 
 dotenv.config();
 
@@ -33,12 +34,22 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 // ---- 1. Start Browser Endpoint ----
 app.post("/start_browser", async (req: Request, res: Response) => {
   try {
-    // If browser is already running, just return success
+    // If browser is already running, check if it's still responsive
     if (stagehand?.page) {
-      return res.json({
-        success: true,
-        message: "Using existing browser session",
-      });
+      try {
+        // Test if the browser is still responsive by evaluating a simple expression
+        await stagehand.page.evaluate(() => true);
+        // If we got here, the browser is still responsive
+        return res.json({
+          success: true,
+          message: "Using existing browser session",
+        });
+      } catch (error) {
+        console.log("Existing browser session is no longer responsive, starting a new one");
+        // Clean up the stale reference
+        stagehand = null;
+        currentConfig = null;
+      }
     }
 
     // Build LLM config based on environment variables
@@ -452,6 +463,364 @@ app.post("/find-repo", async (req: express.Request, res: express.Response) => {
     return res.status(500).json({
       error: error instanceof Error ? error.message : "Unknown error",
       stack: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- 7. Create Seed Image Endpoint ----
+app.post("/create-seed-image", async (req: Request, res: Response) => {
+  try {
+    console.log("Starting seed image creation process...");
+    
+    // Step 1: Remove any existing Docker image with the tag 'myhost'
+    console.log("Removing existing Docker image if it exists...");
+    try {
+      const removeImageResult = await execAsync('cd /home/fume && docker rmi -f myhost');
+      console.log("Docker image removal output:", removeImageResult.stdout || "No output");
+      console.log("Docker image removal stderr:", removeImageResult.stderr || "No stderr");
+    } catch (error) {
+      // It's okay if this fails (e.g., if the image doesn't exist)
+      console.log("No existing Docker image to remove or removal failed:", error);
+    }
+    
+    // Step 2: Remove any existing tar archive to avoid duplicate path issues
+    console.log("Removing existing tar archive if it exists...");
+    try {
+      const removeTarResult = await execAsync('cd /home/fume && rm -f root.tar');
+      console.log("Tar removal output:", removeTarResult.stdout || "No output");
+      console.log("Tar removal stderr:", removeTarResult.stderr || "No stderr");
+    } catch (error) {
+      console.log("Error removing existing tar archive:", error);
+    }
+    
+    // Step 3: Create a fresh tar archive
+    console.log("Creating fresh system tar archive...");
+    const tarCommand = `cd /home/fume && sudo tar --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/tmp --exclude=/home/fume/FumeData --exclude=/home/fume/Documents --exclude=/home/fume/root.tar -cf /home/fume/root.tar /`;
+    console.log("Executing tar command:", tarCommand);
+    
+    const tarResult = await execAsync(tarCommand);
+    console.log("Tar archive created");
+    console.log("Tar stdout:", tarResult.stdout || "No stdout");
+    console.log("Tar stderr:", tarResult.stderr || "No stderr");
+    
+    // Step 4: Import the tar archive as a Docker image
+    console.log("Importing tar archive as Docker image...");
+    const importCommand = `cd /home/fume && cat root.tar | docker import --change "CMD [\"/sbin/init\"]" - myhost:latest`;
+    console.log("Executing import command:", importCommand);
+
+    const importResult = await execAsync(importCommand);
+    console.log("Docker image created");
+    console.log("Import stdout:", importResult.stdout || "No stdout");
+    console.log("Import stderr:", importResult.stderr || "No stderr");
+
+    // Remove the large tar file after import is complete
+    try {
+      await execAsync('cd /home/fume && rm -f root.tar');
+      console.log("Removed tar file after successful import");
+    } catch (rmError) {
+      console.log("Note: Failed to remove tar file after import:", rmError);
+    }
+
+    return res.json({
+      success: true,
+      message: "Seed image created successfully",
+      details: {
+        tarOutput: {
+          stdout: tarResult.stdout || "",
+          stderr: tarResult.stderr || ""
+        },
+        importOutput: {
+          stdout: importResult.stdout || "",
+          stderr: importResult.stderr || ""
+        }
+      }
+    });
+  } catch (error: unknown) {
+    console.error("Error creating seed image:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- 8. Create Minion Endpoint ----
+app.post("/create-minion", async (req: Request, res: Response) => {
+  try {
+    const { 
+      id, 
+      sshDomain, 
+      apiDomain, 
+      vncDomain,
+      taskId,
+      parentTaskId
+    } = req.body;
+    
+    // Validate all required parameters
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "ID parameter is required"
+      });
+    }
+    
+    if (!sshDomain || !apiDomain || !vncDomain) {
+      return res.status(400).json({
+        success: false,
+        error: "All domain parameters (sshDomain, apiDomain, vncDomain) are required"
+      });
+    }
+    
+    if (!taskId) {
+      return res.status(400).json({
+        success: false,
+        error: "taskId parameter is required"
+      });
+    }
+    
+    console.log(`Creating minion with ID: ${id}`);
+    console.log(`Using domains: SSH=${sshDomain}, API=${apiDomain}, VNC=${vncDomain}`);
+    console.log(`Task ID: ${taskId}, Parent Task ID: ${parentTaskId || 'None'}`);
+    
+    // Initialize Docker client
+    const docker = new Docker();
+    
+    // Container name based on ID
+    const containerName = `branch${id}`;
+    
+    // Configure labels for Traefik routing
+    const labels = {
+      "traefik.enable": "true",
+      
+      // SSH routing
+      [`traefik.tcp.routers.ssh-router-${containerName}.rule`]: `HostSNI(\`${sshDomain}\`)`,
+      [`traefik.tcp.routers.ssh-router-${containerName}.entryPoints`]: "ssh",
+      [`traefik.tcp.routers.ssh-router-${containerName}.tls`]: "true",
+      [`traefik.tcp.routers.ssh-router-${containerName}.tls.certresolver`]: "zerosslResolver",
+      [`traefik.tcp.routers.ssh-router-${containerName}.service`]: `ssh-service-${containerName}`,
+      [`traefik.tcp.services.ssh-service-${containerName}.loadbalancer.server.port`]: "22",
+      
+      // API routing
+      [`traefik.http.routers.api-router-${containerName}.rule`]: `Host(\`${apiDomain}\`)`,
+      [`traefik.http.routers.api-router-${containerName}.entryPoints`]: "websecure",
+      [`traefik.http.routers.api-router-${containerName}.tls`]: "true",
+      [`traefik.http.routers.api-router-${containerName}.tls.certresolver`]: "zerosslResolver",
+      [`traefik.http.routers.api-router-${containerName}.service`]: `api-service-${containerName}`,
+      [`traefik.http.services.api-service-${containerName}.loadbalancer.server.port`]: "5553",
+      
+      // VNC routing
+      [`traefik.http.routers.vnc-router-${containerName}.rule`]: `Host(\`${vncDomain}\`)`,
+      [`traefik.http.routers.vnc-router-${containerName}.entryPoints`]: "websecure",
+      [`traefik.http.routers.vnc-router-${containerName}.tls`]: "true",
+      [`traefik.http.routers.vnc-router-${containerName}.tls.certresolver`]: "zerosslResolver",
+      [`traefik.http.routers.vnc-router-${containerName}.service`]: `vnc-service-${containerName}`,
+      [`traefik.http.services.vnc-service-${containerName}.loadbalancer.server.port`]: "6080"
+    };
+    
+    // Determine source directory for btrfs snapshot based on parentTaskId
+    const targetDir = `/home/fume/FumeData/${taskId}`;
+    const sourceDir = parentTaskId 
+      ? `/home/fume/FumeData/${parentTaskId}`
+      : '/home/fume/Documents';
+    
+    // Variable to store snapshot status
+    let snapshotStatus = "completed";
+    
+    // Execute btrfs subvolume snapshot for fast copying
+    console.log(`Creating btrfs snapshot from ${sourceDir} to ${targetDir}...`);
+    try {
+      // Use btrfs subvolume snapshot command
+      await execAsync(`sudo btrfs subvolume snapshot ${sourceDir} ${targetDir}`);
+      console.log('Btrfs snapshot created successfully');
+    } catch (snapshotError: unknown) {
+      console.warn('Snapshot creation encountered errors but will continue:', (snapshotError as Error).message);
+      snapshotStatus = "completed with errors";
+      
+      // Fall back to rsync if btrfs snapshot fails
+      try {
+        console.log('Falling back to rsync...');
+        // First create the target directory and set permissions
+        await execAsync(`sudo mkdir -p ${targetDir}`);
+        await execAsync(`sudo chown -R fume:fume ${targetDir}`);
+        
+        // Use rsync as fallback
+        await execAsync(
+          `rsync -a --quiet ${sourceDir}/ ${targetDir}/`, 
+          { maxBuffer: 10 * 1024 * 1024 } // 10MB buffer
+        );
+        console.log('Rsync fallback completed successfully');
+      } catch (rsyncError: unknown) {
+        console.warn('Rsync fallback also failed:', (rsyncError as Error).message);
+        snapshotStatus = "failed";
+        // Continue with container creation even if copying failed
+      }
+    }
+    
+    // Create container with the specified configuration
+    const container = await docker.createContainer({
+      name: containerName,
+      Image: 'myhost:latest',
+      Labels: labels,
+      HostConfig: {
+        NetworkMode: 'seed-net',
+        Binds: [
+          `${targetDir}:/home/fume/Documents:rw`,
+          // Mount cgroup filesystem for systemd
+          "/sys/fs/cgroup:/sys/fs/cgroup:ro"
+        ],
+        Privileged: true, // Required for systemd to work properly
+        SecurityOpt: ["seccomp=unconfined"] // May be needed for some systemd operations
+      }
+    });
+    
+    // Start the container
+    await container.start();
+    console.log(`Minion container ${containerName} started successfully`);
+    
+    // Execute commands to ensure services are running
+    console.log(`Starting services in container ${containerName}...`);
+    try {
+      // Start SSH service
+      const sshExec = await container.exec({
+        Cmd: ['/bin/bash', '-c', 'sudo systemctl start ssh'],
+        AttachStdout: true,
+        AttachStderr: true
+      });
+      await sshExec.start({});
+      
+      // Ensure /tmp has correct permissions
+      const tmpExec = await container.exec({
+        Cmd: ['/bin/bash', '-c', 'sudo mkdir -p /tmp && sudo chmod 1777 /tmp'],
+        AttachStdout: true,
+        AttachStderr: true
+      });
+      await tmpExec.start({});
+      
+      console.log(`Services started successfully in container ${containerName}`);
+    } catch (serviceError: unknown) {
+      console.warn(`Warning: Error starting services in container: ${(serviceError as Error).message}`);
+      // Continue even if service startup has issues
+    }
+    
+    console.log(`Minion container ${containerName} created and configured successfully`);
+    
+    return res.json({
+      success: true,
+      message: `Minion container created successfully`,
+      container: {
+        id: container.id,
+        name: containerName,
+        endpoints: {
+          ssh: `ssh://${sshDomain}`,
+          api: `https://${apiDomain}`,
+          vnc: `https://${vncDomain}`
+        },
+        taskId,
+        parentTaskId: parentTaskId || null,
+        snapshot_output: snapshotStatus
+      }
+    });
+  } catch (error: unknown) {
+    console.error("Error creating minion container:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- 9. Delete Minion Endpoint ----
+app.post("/delete-minion", async (req: Request, res: Response) => {
+  try {
+    const { 
+      id,
+      taskId,
+      removeData = false // Optional parameter to remove the data directory
+    } = req.body;
+    
+    // Validate required parameters
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "ID parameter is required"
+      });
+    }
+    
+    console.log(`Deleting minion with ID: ${id}`);
+    
+    // Initialize Docker client
+    const docker = new Docker();
+    
+    // Container name based on ID
+    const containerName = `branch${id}`;
+    
+    try {
+      // Get container reference
+      const container = docker.getContainer(containerName);
+      
+      // Check if container exists by getting its info
+      await container.inspect();
+      
+      // Stop the container if it's running
+      console.log(`Stopping container ${containerName}...`);
+      await container.stop().catch(err => {
+        // Ignore error if container is already stopped
+        console.log(`Container ${containerName} may already be stopped:`, err.message);
+      });
+      
+      // Remove the container
+      console.log(`Removing container ${containerName}...`);
+      await container.remove();
+      
+      console.log(`Container ${containerName} removed successfully`);
+      
+      // Optionally remove the data directory
+      if (removeData && taskId) {
+        const dataDir = `/home/fume/FumeData/${taskId}`;
+        console.log(`Removing data directory ${dataDir}...`);
+        
+        try {
+          // Check if it's a btrfs subvolume first
+          const isSubvolume = await execAsync(`sudo btrfs subvolume show ${dataDir}`).then(() => true).catch(() => false);
+          
+          if (isSubvolume) {
+            // Delete the btrfs subvolume
+            await execAsync(`sudo btrfs subvolume delete ${dataDir}`);
+          } else {
+            // Regular directory removal
+            await execAsync(`sudo rm -rf ${dataDir}`);
+          }
+          
+          console.log(`Data directory ${dataDir} removed successfully`);
+        } catch (dirError: unknown) {
+          console.warn(`Error removing data directory: ${(dirError as Error).message}`);
+          // Continue even if directory removal fails
+        }
+      }
+      
+      return res.json({
+        success: true,
+        message: `Minion container ${containerName} deleted successfully`,
+        dataRemoved: removeData && taskId ? true : false
+      });
+    } catch (containerError: unknown) {
+      // If container doesn't exist or other Docker error
+      console.error(`Error with container ${containerName}:`, (containerError as Error).message);
+      
+      return res.status(404).json({
+        success: false,
+        error: `Container ${containerName} not found or could not be accessed`,
+        details: (containerError as Error).message
+      });
+    }
+  } catch (error: unknown) {
+    console.error("Error deleting minion container:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
     });
   }
 });
