@@ -9,6 +9,7 @@ import * as os from "os";
 import * as fs from "fs";
 import dotenv from "dotenv";
 import Docker from 'dockerode';
+import { ProcessManager } from './executeCommand.js';
 
 dotenv.config();
 
@@ -21,6 +22,13 @@ app.use(express.json());
 let stagehand: Stagehand | null = null;
 let currentConfig: any = null; // Holds dynamic runtime config (browser + LLM)
 
+// Initialize process manager for command execution
+const processManager = ProcessManager.getInstance();
+
+// Store recording events globally
+let recordingEvents: any[] = [];
+let isRecording = false;
+
 // ---- Error Handling Middleware ----
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   console.error("Error:", err);
@@ -29,6 +37,132 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     error: err.message,
     details: err.stack,
   });
+});
+
+// ---- Start Recording Endpoint ----
+app.post("/start-recording", async (req: Request, res: Response) => {
+  try {
+    // Check if browser is running
+    if (!stagehand?.page) {
+      throw new Error("Browser not started");
+    }
+
+    // Reset recording state
+    recordingEvents = [];
+    isRecording = true;
+    
+    console.log("Starting rrweb recording...");
+    
+    // Inject rrweb script and initialize recording
+    await stagehand.page.evaluate(() => {
+      return new Promise((resolve, reject) => {
+        try {
+          // Check if rrweb script is already loaded
+          if (!(window as any).rrweb) {
+            // Create script element to load rrweb
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js';
+            script.onload = startRecording;
+            script.onerror = (err) => reject(`Failed to load rrweb script: ${err}`);
+            document.head.appendChild(script);
+          } else {
+            startRecording();
+          }
+          
+          function startRecording() {
+            try {
+              // Initialize rrweb recorder
+              (window as any).rrwebEvents = [];
+              
+              (window as any).rrwebStop = (window as any).rrweb.record({
+                emit(event: any) {
+                  (window as any).rrwebEvents.push(event);
+                },
+                recordCanvas: true,
+                collectFonts: true,
+              });
+              
+              resolve(true);
+            } catch (error) {
+              reject(`Failed to initialize rrweb recording: ${error}`);
+            }
+          }
+        } catch (error) {
+          reject(`Error setting up recording: ${error}`);
+        }
+      });
+    });
+    
+    return res.json({
+      success: true,
+      message: "Recording started"
+    });
+  } catch (error: unknown) {
+    console.error("Error starting recording:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- Stop Recording Endpoint ----
+app.post("/stop-recording", async (req: Request, res: Response) => {
+  try {
+    // Check if browser is running
+    if (!stagehand?.page) {
+      throw new Error("Browser not started");
+    }
+    
+    if (!isRecording) {
+      throw new Error("Recording not started");
+    }
+    
+    console.log("Stopping rrweb recording...");
+    
+    // Stop recording and retrieve events
+    const events = await stagehand.page.evaluate(() => {
+      try {
+        // Stop recording if we have the stop function
+        if ((window as any).rrwebStop && typeof (window as any).rrwebStop === 'function') {
+          (window as any).rrwebStop();
+        }
+        
+        // Get recorded events
+        const events = (window as any).rrwebEvents || [];
+        
+        // Clean up
+        (window as any).rrwebEvents = undefined;
+        (window as any).rrwebStop = undefined;
+        
+        return events;
+      } catch (error) {
+        console.error("Error stopping recording:", error);
+        return [];
+      }
+    });
+    
+    // Store events and update recording state
+    recordingEvents = events;
+    isRecording = false;
+    
+    return res.json({
+      success: true,
+      message: "Recording stopped",
+      data: {
+        events: events,
+        count: events.length
+      }
+    });
+  } catch (error: unknown) {
+    console.error("Error stopping recording:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
 });
 
 // ---- 1. Start Browser Endpoint ----
@@ -825,8 +959,357 @@ app.post("/delete-minion", async (req: Request, res: Response) => {
   }
 });
 
+// ---- 10. Interactive Command Execution Endpoint ----
+app.post("/execute-command", async (req: Request, res: Response) => {
+  try {
+    const { process_id, input } = req.body;
+    
+    // Validate process_id is provided
+    if (!process_id) {
+      return res.status(400).json({
+        success: false,
+        error: "process_id parameter is required"
+      });
+    }
+    
+    // Get the process status
+    const processStatus = processManager.getProcessStatus(process_id);
+    
+    // Case 1: Process doesn't exist yet, create it with the provided input as command
+    if (!processStatus && input) {
+      console.log(`Creating new process with ID: ${process_id}, command: ${input}`);
+      
+      // Start the process (treat input as the full command)
+      const cmdPromise = processManager.startProcess(
+        process_id,
+        input,
+        [], // No separate args
+        {} // No special options
+      );
+      
+      // Wait for initial output (or completion)
+      try {
+        // Use a 30-second timeout that resets on new output (up to 100 resets)
+        const commandResult = await Promise.race([
+          cmdPromise,
+          new Promise(async (resolve) => {
+            // Initial waiting period
+            await new Promise(r => setTimeout(r, 500));
+            
+            console.log(`Waiting for initial output from process ${process_id} (30-second timeout, max 100 resets)...`);
+            
+            // Set up variables for waiting
+            const checkInterval = 300; // ms
+            let timeWithoutNewOutput = 0;
+            const maxTimeWithoutNewOutput = 30000; // Fixed 30 second timeout
+            let lastCheckedOutput = "";
+            let resetCount = 0;
+            const maxResets = 100; // Maximum number of timeout resets
+            
+            // Keep checking until we hit the timeout without new output or max resets
+            while (timeWithoutNewOutput < maxTimeWithoutNewOutput && resetCount < maxResets) {
+              await new Promise(r => setTimeout(r, checkInterval));
+              timeWithoutNewOutput += checkInterval;
+              
+              const currentStatus = processManager.getProcessStatus(process_id);
+              
+              // If process is no longer active, break immediately
+              if (currentStatus && !currentStatus.isActive) {
+                console.log(`Process ${process_id} completed during initial wait, returning result immediately`);
+                break;
+              }
+              
+              // If we have new output
+              if (currentStatus && currentStatus.lastOutput && 
+                  currentStatus.lastOutput !== lastCheckedOutput) {
+                resetCount++;
+                console.log(`New output detected from process ${process_id}, resetting timeout (reset #${resetCount}/${maxResets})`);
+                // Reset the timeout when we get new output
+                timeWithoutNewOutput = 0;
+                lastCheckedOutput = currentStatus.lastOutput;
+              }
+            }
+            
+            if (resetCount >= maxResets) {
+              console.log(`Maximum reset count (${maxResets}) reached for process ${process_id}`);
+            } else if (timeWithoutNewOutput >= maxTimeWithoutNewOutput) {
+              console.log(`Timeout of ${maxTimeWithoutNewOutput}ms reached for process ${process_id}`);
+            }
+            
+            resolve(null);
+          })
+        ]);
+        
+        // If the command completed already
+        if (commandResult) {
+          return res.json({
+            success: true,
+            process_id,
+            status: "completed",
+            output: (commandResult as any).stdout,
+            exit_code: (commandResult as any).exitCode,
+            working_directory: (commandResult as any).workingDirectory
+          });
+        }
+        
+        // If still running, return current status
+        const updatedStatus = processManager.getProcessStatus(process_id);
+        return res.json({
+          success: true,
+          process_id,
+          status: updatedStatus?.isActive ? "running" : "completed",
+          output: updatedStatus?.output || "", // Return all accumulated output
+          working_directory: updatedStatus?.workingDirectory || ""
+        });
+      } catch (error) {
+        // If there was an error executing the command
+        return res.status(500).json({
+          success: false,
+          process_id,
+          error: error instanceof Error ? error.message : "Unknown error",
+          status: "error"
+        });
+      }
+    }
+    
+    // Case 2: Process exists, send input if provided
+    if (processStatus && input) {
+      console.log(`Sending input to existing process ${process_id}: ${input}`);
+      
+      // If the process exists but is no longer active, restart it with the new input
+      if (!processStatus.isActive) {
+        console.log(`Process ${process_id} is completed. Restarting with new command: ${input}`);
+        
+        // Start a new process with the same ID but new command
+        const cmdPromise = processManager.startProcess(
+          process_id,
+          input,
+          [], // No separate args
+          {cwd: processStatus.workingDirectory} // Maintain working directory
+        );
+        
+        // Wait for initial output (or completion)
+        try {
+          // Use a 30-second timeout that resets on new output (up to 100 resets)
+          const commandResult = await Promise.race([
+            cmdPromise,
+            new Promise(async (resolve) => {
+              // Initial waiting period
+              await new Promise(r => setTimeout(r, 500));
+              
+              console.log(`Waiting for initial output from process ${process_id} (30-second timeout, max 100 resets)...`);
+              
+              // Set up variables for waiting
+              const checkInterval = 300; // ms
+              let timeWithoutNewOutput = 0;
+              const maxTimeWithoutNewOutput = 30000; // Fixed 30 second timeout
+              let lastCheckedOutput = "";
+              let resetCount = 0;
+              const maxResets = 100; // Maximum number of timeout resets
+              
+              // Keep checking until we hit the timeout without new output or max resets
+              while (timeWithoutNewOutput < maxTimeWithoutNewOutput && resetCount < maxResets) {
+                await new Promise(r => setTimeout(r, checkInterval));
+                timeWithoutNewOutput += checkInterval;
+                
+                const currentStatus = processManager.getProcessStatus(process_id);
+                
+                // If process is no longer active, break immediately
+                if (currentStatus && !currentStatus.isActive) {
+                  console.log(`Process ${process_id} completed during initial wait, returning result immediately`);
+                  break;
+                }
+                
+                // If we have new output
+                if (currentStatus && currentStatus.lastOutput && 
+                    currentStatus.lastOutput !== lastCheckedOutput) {
+                  resetCount++;
+                  console.log(`New output detected from process ${process_id}, resetting timeout (reset #${resetCount}/${maxResets})`);
+                  // Reset the timeout when we get new output
+                  timeWithoutNewOutput = 0;
+                  lastCheckedOutput = currentStatus.lastOutput;
+                }
+              }
+              
+              if (resetCount >= maxResets) {
+                console.log(`Maximum reset count (${maxResets}) reached for process ${process_id}`);
+              } else if (timeWithoutNewOutput >= maxTimeWithoutNewOutput) {
+                console.log(`Timeout of ${maxTimeWithoutNewOutput}ms reached for process ${process_id}`);
+              }
+              
+              resolve(null);
+            })
+          ]);
+          
+          // If the command completed already
+          if (commandResult) {
+            return res.json({
+              success: true,
+              process_id,
+              status: "completed",
+              output: (commandResult as any).stdout,
+              exit_code: (commandResult as any).exitCode,
+              working_directory: (commandResult as any).workingDirectory
+            });
+          }
+          
+          // If still running, return current status
+          const updatedStatus = processManager.getProcessStatus(process_id);
+          return res.json({
+            success: true,
+            process_id,
+            status: updatedStatus?.isActive ? "running" : "completed",
+            output: updatedStatus?.output || "", // Return all accumulated output
+            working_directory: updatedStatus?.workingDirectory || ""
+          });
+        } catch (error) {
+          // If there was an error executing the command
+          return res.status(500).json({
+            success: false,
+            process_id,
+            error: error instanceof Error ? error.message : "Unknown error",
+            status: "error"
+          });
+        }
+      }
+      
+      // Process is active, send input
+      const inputSent = processManager.sendInput(process_id, input);
+      
+      if (!inputSent) {
+        return res.status(400).json({
+          success: false,
+          process_id,
+          error: "Process is not accepting input",
+          status: "error"
+        });
+      }
+      
+      // Wait for output with a 30-second timeout that resets on new output (up to 100 resets)
+      console.log(`Waiting for output from process ${process_id} (30-second timeout, max 100 resets)...`);
+      
+      // Wait for output to appear with a check every 300ms
+      const checkInterval = 300; // ms
+      let timeWithoutNewOutput = 0;
+      const maxTimeWithoutNewOutput = 30000; // Fixed 30 second timeout
+      let lastCheckedOutput = processManager.getProcessStatus(process_id)?.lastOutput || "";
+      let resetCount = 0;
+      const maxResets = 100; // Maximum number of timeout resets
+      
+      // Keep checking until we hit the timeout without new output or max resets
+      while (timeWithoutNewOutput < maxTimeWithoutNewOutput && resetCount < maxResets) {
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+        timeWithoutNewOutput += checkInterval;
+        
+        const currentStatus = processManager.getProcessStatus(process_id);
+        
+        if (!currentStatus?.isActive) {
+          console.log(`Process ${process_id} completed, returning result immediately`);
+          break; // Process completed, return immediately
+        }
+        
+        // If we have new output that's not just the echo of our input
+        if (currentStatus?.lastOutput && 
+            currentStatus.lastOutput !== lastCheckedOutput && 
+            currentStatus.lastOutput !== input + '\n') {
+          
+          resetCount++;
+          console.log(`New output detected from process ${process_id}, resetting timeout (reset #${resetCount}/${maxResets})`);
+          // Reset the timeout when we get new output
+          timeWithoutNewOutput = 0;
+          lastCheckedOutput = currentStatus.lastOutput;
+        }
+
+      }
+      
+      if (resetCount >= maxResets) {
+        console.log(`Maximum reset count (${maxResets}) reached for process ${process_id}`);
+      } else if (timeWithoutNewOutput >= maxTimeWithoutNewOutput) {
+        console.log(`Timeout of ${maxTimeWithoutNewOutput}ms reached for process ${process_id}`);
+      }
+      
+      // Get updated status
+      const updatedStatus = processManager.getProcessStatus(process_id);
+      
+      return res.json({
+        success: true,
+        process_id,
+        status: updatedStatus?.isActive ? "running" : "completed",
+        output: updatedStatus?.output || "", // Return full output instead of just last piece
+        working_directory: updatedStatus?.workingDirectory || ""
+      });
+    }
+    
+    // Case 3: Process exists, just checking status (no input)
+    if (processStatus && !input) {
+      return res.json({
+        success: true,
+        process_id,
+        status: processStatus.isActive ? "running" : "completed",
+        output: processStatus.output,
+        working_directory: processStatus.workingDirectory,
+        created_at: processStatus.createdAt,
+        last_activity: processStatus.lastActivity
+      });
+    }
+    
+    // Case 4: Process doesn't exist and no input provided
+    if (!processStatus && !input) {
+      return res.status(400).json({
+        success: false,
+        error: "Process does not exist. You must provide input to create it."
+      });
+    }
+    
+    // Should never reach here, but just in case
+    return res.status(500).json({
+      success: false,
+      error: "Unexpected state in command execution endpoint"
+    });
+  } catch (error: unknown) {
+    console.error("Error in execute-command endpoint:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- 11. List Command Processes Endpoint ----
+app.get("/list-processes", async (req: Request, res: Response) => {
+  try {
+    const processIds = processManager.listProcessIds();
+    const processes = processIds.map((id: string) => {
+      const status = processManager.getProcessStatus(id);
+      return {
+        process_id: id,
+        command: status?.command,
+        status: status?.isActive ? "running" : "completed",
+        created_at: status?.createdAt,
+        last_activity: status?.lastActivity,
+        working_directory: status?.workingDirectory
+      };
+    });
+    
+    return res.json({
+      success: true,
+      count: processes.length,
+      processes
+    });
+  } catch (error: unknown) {
+    console.error("Error listing command processes:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
 // ---- Server Listen ----
 const PORT = process.env.PORT || 5553;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
