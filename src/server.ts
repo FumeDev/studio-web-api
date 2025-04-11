@@ -93,6 +93,10 @@ app.post("/start_browser", async (req: Request, res: Response) => {
       domSettleTimeoutMs: 300_000,
       logger: (message: any) => console.log(message),
       debugDom: false,
+      // Add launch options for the browser
+      launchOptions: {
+        args: ["--start-maximized"]
+      }
     };
 
     // Ensure headless mode is properly set
@@ -128,6 +132,19 @@ app.post("/start_browser", async (req: Request, res: Response) => {
         console.log("Navigating to Google...");
         await stagehand.page.goto("https://www.google.com");
         console.log("Navigation to Google complete");
+
+        // Get screen dimensions and set viewport to maximize window
+        try {
+          const screen = await stagehand.page.evaluate(() => {
+            return { width: window.screen.width, height: window.screen.height };
+          });
+          console.log(`Screen dimensions: ${screen.width}x${screen.height}`);
+          await stagehand.page.setViewportSize({ width: 1024, height: 768 });
+          console.log("Browser window maximized.");
+        } catch (vpError) {
+          console.warn("Could not maximize browser window:", vpError);
+          // Continue even if maximizing fails
+        }
 
         return res.json({
           success: true,
