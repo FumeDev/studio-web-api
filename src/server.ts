@@ -139,7 +139,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
             return { width: window.screen.width, height: window.screen.height };
           });
           console.log(`Screen dimensions: ${screen.width}x${screen.height}`);
-          await stagehand.page.setViewportSize({ width: 2000, height: 768 });
+          await stagehand.page.setViewportSize({ width: 1900, height: 900 });
           console.log("Browser window maximized.");
         } catch (vpError) {
           console.warn("Could not maximize browser window:", vpError);
