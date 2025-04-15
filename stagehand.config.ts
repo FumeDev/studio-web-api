@@ -1,12 +1,19 @@
 import type { ConstructorParams, LogLine } from "@browserbasehq/stagehand";
 import dotenv from "dotenv";
-false
-false
+false;
+false;
 
 dotenv.config();
 
 const StagehandConfig: ConstructorParams = {
   env: "LOCAL",
+  localBrowserLaunchOptions: {
+    headless: false,
+    viewport: {
+      width: 1900,
+      height: 1000,
+    },
+  }
   apiKey: process.env.BROWSERBASE_API_KEY /* API key for authentication */,
   projectId: process.env.BROWSERBASE_PROJECT_ID /* Project identifier */,
   debugDom: undefined /* Enable DOM debugging features */,
@@ -21,11 +28,9 @@ const StagehandConfig: ConstructorParams = {
   browserbaseSessionID:
     undefined /* Session ID for resuming Browserbase sessions */,
   modelName: "claude-3-5-sonnet-20241022" /* Name of the model to use */,
-      modelClientOptions: {
-        apiKey: process.env.ANTHROPIC_API_KEY,
-      } /* Configuration options for the model client */,
-  
-  
+  modelClientOptions: {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  } /* Configuration options for the model client */,
 };
 
 export default StagehandConfig;
