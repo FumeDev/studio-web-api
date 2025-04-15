@@ -270,13 +270,10 @@ app.post("/act", async (req: Request, res: Response) => {
     if (!stagehand?.page) {
       throw new Error("Browser not started");
     }
-    // Must have a valid LLM config
-    if (
-      !currentConfig?.llm?.anthropicApiKey &&
-      !currentConfig?.llm?.openaiApiKey
-    ) {
+    // Must have a valid OpenAI API key
+    if (!process.env.OPENAI_API_KEY) {
       throw new Error(
-        "LLM configuration not set. Please start the browser first with an API key."
+        "OPENAI_API_KEY must be set in environment variables for agent functionality"
       );
     }
 
@@ -292,25 +289,32 @@ app.post("/act", async (req: Request, res: Response) => {
       console.log("Navigation complete");
     }
 
-    console.log("Attempting action:", action);
-    // Stagehand .act(...) call
-    await stagehand.page.act(action);
+    console.log("Creating agent with OpenAI computer-use-preview model...");
+    const agent = stagehand.agent({
+      provider: "openai",
+      model: "computer-use-preview",
+      instructions: "You are a persistent manual QA tester. You operate a web browser to perform the task you are given. You are an expert on inferring user interfaces and making speculative decisions like inferring icons. You are also very persistent and patient. You dismiss any obstacles like modals, popups, or other distractions that cover your test area if needed. You keep trying new approaches and paths until you complete the task.",
+      options: {
+        apiKey: process.env.OPENAI_API_KEY
+      }
+    });
 
-    return res.json({ success: true, message: "Action executed successfully" });
+    console.log("Executing action:", action);
+    const result = await agent.execute(action);
+
+    return res.json({ 
+      success: true, 
+      message: "Action executed successfully",
+      completed: result.completed,
+      actions: result.actions,
+      metadata: result.metadata
+    });
   } catch (error: unknown) {
     console.error("Error in act endpoint:", error);
     return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
       details: error instanceof Error ? error.stack : undefined,
-      // We log some debug info about currentConfig
-      config: {
-        modelName: currentConfig?.llm?.modelName,
-        provider: currentConfig?.llm?.provider,
-        // Are we sure we have a key?
-        anthropicApiKeySet: !!currentConfig?.llm?.anthropicApiKey,
-        openaiApiKeySet: !!currentConfig?.llm?.openaiApiKey,
-      },
     });
   }
 });
