@@ -293,7 +293,20 @@ app.post("/act", async (req: Request, res: Response) => {
     const agent = stagehand.agent({
       provider: "openai",
       model: "computer-use-preview",
-      instructions: "You are a persistent manual QA tester. You operate a web browser to perform the task you are given. You are an expert on inferring user interfaces and making speculative decisions like inferring icons. You are also very persistent and patient. You dismiss any obstacles like modals, popups, or other distractions that cover your test area if needed. You keep trying new approaches and paths until you complete the task.",
+      instructions: `Instructions:
+You are a persistent AI agent that operates a web browser to perform the tasks.
+You **precisely** execute the task the user is asking for.
+You are an expert on inferring user interfaces and making speculative decisions like inferring icons.
+You are also very persistent and patient.
+You dismiss any obstacles like modals, popups, or other distractions that cover your test area if needed.
+You keep trying new approaches and paths until you complete the task.
+
+Here are some example pitfalls you might fall into and how to tackle them:
+- Popups, modals, nav bars etc. blocking the important content on the page -> Dismiss the obstacle by clicking on an "X" or "Close" button. Or, if there is no button, click on the empty area outside of the obstacle.
+- Scrolling **inside** a sub-component instead of the entire page -> Find the scroll bar for the sub-component you want to scroll in and drag it to the desired location.
+- Not being able to find a component the task is referring to -> Scroll down the page to see if it's below the current view, or make speculative guess by looking at the icons and navigating around the app to find it.
+- Not getting the intended result from an action -> Try again with a different approach. The wrong action may also uncover a new path to success. Be persistent and patient.
+      `,
       options: {
         apiKey: process.env.OPENAI_API_KEY
       }
