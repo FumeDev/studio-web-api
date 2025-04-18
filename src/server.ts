@@ -222,6 +222,32 @@ app.post("/goto", async (req: Request, res: Response) => {
   }
 });
 
+// ---- 2.5. "Go Back" Endpoint ----
+app.post("/go_back", async (req: Request, res: Response) => {
+  try {
+    // Must have an initialized Stagehand
+    if (!stagehand?.page) {
+      throw new Error("Browser not started");
+    }
+
+    console.log("Navigating back...");
+    await stagehand.page.goBack();
+    console.log("Navigation back complete");
+
+    return res.json({
+      success: true,
+      message: `Successfully navigated back`,
+    });
+  } catch (error: unknown) {
+    console.error("Error in go_back endpoint:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
 // ---- 3. Screenshot Endpoint ----
 app.get("/screenshot", async (req: Request, res: Response) => {
   try {
@@ -300,6 +326,7 @@ You are an expert on inferring user interfaces and making speculative decisions 
 You are also very persistent and patient.
 You dismiss any obstacles like modals, popups, or other distractions that cover your test area if needed.
 You keep trying new approaches and paths until you complete the task.
+You never use CTRL+A select values in text fields. Instead, you click on the text field and **drag over the existing text** (if it exists) to select and delete it if you need to.
 
 Here are some example pitfalls you might fall into and how to tackle them:
 - Popups, modals, nav bars etc. blocking the important content on the page -> Dismiss the obstacle by clicking on an "X" or "Close" button. Or, if there is no button, click on the empty area outside of the obstacle.
