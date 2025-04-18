@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
-import { Stagehand } from "@browserbasehq/stagehand";
+import { Stagehand } from "../lib/stagehand/dist";
 import StagehandConfig from "./stagehand.config";
 import { ensureHeadlessConfig, logBrowserConfig } from "./browser-config";
 import { exec } from "child_process";
