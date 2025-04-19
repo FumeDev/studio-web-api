@@ -331,7 +331,8 @@ Here are some example pitfalls you might fall into and how to tackle them:
 - Popups, modals, nav bars etc. blocking the important content on the page -> Dismiss the obstacle by clicking on an "X" or "Close" button. Or, if there is no button, click on the empty area outside of the obstacle.
 - Scrolling **inside** a sub-component instead of the entire page -> Find the scroll bar for the sub-component you want to scroll in and drag it to the desired location.
 - Not being able to find a component the task is referring to -> Scroll down the page to see if it's below the current view, or make speculative guess by looking at the icons and navigating around the app to find it.
-- Not getting the intended result from an action -> Try again with a different approach. The wrong action may also uncover a new path to success. Be persistent and patient.`,
+- Not getting the intended result from an action -> Try again with a different approach. The wrong action may also uncover a new path to success. Be persistent and patient.
+- Mistaking the placeholder in a text input for the actual text -> If you see a text input with a half transparent text inside, it's most likely a placeholder. You can usually click on it to select it and then type your own text without needing to clear it first.`,
       options: {
         apiKey: process.env.OPENAI_API_KEY
       }
