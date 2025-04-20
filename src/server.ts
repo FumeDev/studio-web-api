@@ -128,6 +128,40 @@ app.post("/start_browser", async (req: Request, res: Response) => {
         await stagehand.init();
         console.log("Stagehand initialized successfully");
 
+        // Add initialization script to maintain zoom level and modify placeholders
+        await stagehand.page.addInitScript(() => {
+          // Set zoom level
+          document.body.style.zoom = "75%";
+          
+          // Function to update placeholders
+          const updatePlaceholders = () => {
+            document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(element => {
+              const el = element as HTMLInputElement | HTMLTextAreaElement;
+              if (el.placeholder && !el.placeholder.endsWith(' (PLACEHOLDER)')) {
+                el.placeholder = `${el.placeholder} (PLACEHOLDER)`;
+              }
+            });
+          };
+
+          // Initial update
+          updatePlaceholders();
+
+          // Watch for dynamic changes
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+              if (mutation.addedNodes.length > 0) {
+                updatePlaceholders();
+              }
+            });
+          });
+
+          // Start observing the document with the configured parameters
+          observer.observe(document.body, { 
+            childList: true, 
+            subtree: true 
+          });
+        });
+
         // Navigate to Google
         console.log("Navigating to Google...");
         await stagehand.page.goto("https://www.google.com");
@@ -207,6 +241,20 @@ app.post("/goto", async (req: Request, res: Response) => {
     console.log("Navigating to:", url);
     await stagehand.page.goto(url);
     console.log("Navigation complete");
+
+    // Ensure zoom level and placeholders are maintained after navigation
+    await stagehand.page.evaluate(() => {
+      // Set zoom level
+      document.body.style.zoom = "75%";
+      
+      // Update placeholders
+      document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(element => {
+        const el = element as HTMLInputElement | HTMLTextAreaElement;
+        if (el.placeholder && !el.placeholder.endsWith(' (PLACEHOLDER)')) {
+          el.placeholder = `${el.placeholder} (PLACEHOLDER)`;
+        }
+      });
+    });
 
     return res.json({
       success: true,
