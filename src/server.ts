@@ -317,8 +317,8 @@ app.post("/act", async (req: Request, res: Response) => {
 
     console.log("Creating agent with OpenAI computer-use-preview model...");
     const agent = stagehand.agent({
-      provider: "openai",
-      model: "computer-use-preview",
+      provider: "anthropic",
+      model: "claude-3-7-sonnet-20250219",
       instructions: `Instructions:
 You are a persistent AI agent that operates a web browser to perform the tasks.
 You **precisely** execute the task the user is asking for.
@@ -335,7 +335,7 @@ Here are some example pitfalls you might fall into and how to tackle them:
 - Not getting the intended result from an action -> Try again with a different approach. The wrong action may also uncover a new path to success. Be persistent and patient.
 - Mistaking the placeholder in a text input for the actual text -> If you see a text input with a half transparent text inside, it's most likely a placeholder. You can usually click on it to select it and then type your own text without needing to clear it first.`,
       options: {
-        apiKey: process.env.OPENAI_API_KEY
+        apiKey: process.env.ANTHROPIC_API_KEY
       }
     });
 
