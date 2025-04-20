@@ -130,36 +130,67 @@ app.post("/start_browser", async (req: Request, res: Response) => {
 
         // Add initialization script to maintain zoom level and modify placeholders
         await stagehand.page.addInitScript(() => {
-          // Set zoom level
-          document.body.style.zoom = "75%";
-          
-          // Function to update placeholders
-          const updatePlaceholders = () => {
-            document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(element => {
-              const el = element as HTMLInputElement | HTMLTextAreaElement;
-              if (el.placeholder && !el.placeholder.endsWith(' (PLACEHOLDER)')) {
-                el.placeholder = `${el.placeholder} (PLACEHOLDER)`;
+          const setupPage = () => {
+            // Set zoom using transform scale instead of zoom property
+            const style = document.createElement('style');
+            style.textContent = `
+              html {
+                transform: scale(0.75);
+                transform-origin: top left;
+                width: 133.33%;
+                height: 133.33%;
+                position: relative;
               }
+              body {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+              }
+            `;
+            document.head.appendChild(style);
+
+            // Function to update placeholders
+            const updatePlaceholders = () => {
+              const inputs = document.querySelectorAll('input, textarea');
+              inputs.forEach(element => {
+                if (element instanceof HTMLElement) {
+                  const placeholder = element.getAttribute('placeholder');
+                  if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
+                    element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
+                  }
+                }
+              });
+            };
+
+            // Run initial update
+            updatePlaceholders();
+
+            // Set up observer for dynamic content
+            const observer = new MutationObserver((mutations) => {
+              mutations.forEach(mutation => {
+                if (mutation.addedNodes.length > 0) {
+                  updatePlaceholders();
+                }
+              });
+            });
+
+            // Start observing with appropriate config
+            observer.observe(document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['placeholder']
             });
           };
 
-          // Initial update
-          updatePlaceholders();
-
-          // Watch for dynamic changes
-          const observer = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-              if (mutation.addedNodes.length > 0) {
-                updatePlaceholders();
-              }
-            });
-          });
-
-          // Start observing the document with the configured parameters
-          observer.observe(document.body, { 
-            childList: true, 
-            subtree: true 
-          });
+          // Run setup when DOM is loaded
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupPage);
+          } else {
+            setupPage();
+          }
         });
 
         // Navigate to Google
@@ -244,14 +275,34 @@ app.post("/goto", async (req: Request, res: Response) => {
 
     // Ensure zoom level and placeholders are maintained after navigation
     await stagehand.page.evaluate(() => {
-      // Set zoom level
-      document.body.style.zoom = "75%";
-      
+      // Set zoom using transform scale
+      const style = document.createElement('style');
+      style.textContent = `
+        html {
+          transform: scale(0.75);
+          transform-origin: top left;
+          width: 133.33%;
+          height: 133.33%;
+          position: relative;
+        }
+        body {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+        }
+      `;
+      document.head.appendChild(style);
+
       // Update placeholders
-      document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(element => {
-        const el = element as HTMLInputElement | HTMLTextAreaElement;
-        if (el.placeholder && !el.placeholder.endsWith(' (PLACEHOLDER)')) {
-          el.placeholder = `${el.placeholder} (PLACEHOLDER)`;
+      const inputs = document.querySelectorAll('input, textarea');
+      inputs.forEach(element => {
+        if (element instanceof HTMLElement) {
+          const placeholder = element.getAttribute('placeholder');
+          if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
+            element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
+          }
         }
       });
     });
