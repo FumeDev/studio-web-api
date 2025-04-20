@@ -149,6 +149,15 @@ app.post("/start_browser", async (req: Request, res: Response) => {
                 height: 100%;
               }
             `;
+            
+            // Remove any existing injected style to prevent duplicates
+            const existingStyle = document.head.querySelector('style[data-injected="true"]');
+            if (existingStyle) {
+              existingStyle.remove();
+            }
+            
+            // Mark our style as injected
+            style.setAttribute('data-injected', 'true');
             document.head.appendChild(style);
 
             // Function to update placeholders
@@ -185,12 +194,45 @@ app.post("/start_browser", async (req: Request, res: Response) => {
             });
           };
 
-          // Run setup when DOM is loaded
-          if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', setupPage);
-          } else {
+          // Run setup immediately
+          setupPage();
+
+          // Handle redirects and navigation
+          let lastUrl = window.location.href;
+          
+          // Create an observer instance to watch for URL changes
+          const urlObserver = new MutationObserver(() => {
+            if (window.location.href !== lastUrl) {
+              lastUrl = window.location.href;
+              // Small delay to ensure DOM is updated
+              setTimeout(setupPage, 100);
+            }
+          });
+
+          // Start observing the document with the configured parameters
+          urlObserver.observe(document.body, {
+            childList: true,
+            subtree: true
+          });
+
+          // Also watch for navigation events
+          window.addEventListener('popstate', setupPage);
+          window.addEventListener('pushstate', setupPage);
+          window.addEventListener('replacestate', setupPage);
+          
+          // Intercept history methods
+          const originalPushState = history.pushState;
+          const originalReplaceState = history.replaceState;
+          
+          history.pushState = function(...args: Parameters<typeof history.pushState>) {
+            originalPushState.apply(this, args);
             setupPage();
-          }
+          };
+          
+          history.replaceState = function(...args: Parameters<typeof history.replaceState>) {
+            originalReplaceState.apply(this, args);
+            setupPage();
+          };
         });
 
         // Navigate to Google
