@@ -10,8 +10,8 @@ const StagehandConfig: ConstructorParams = {
   localBrowserLaunchOptions: {
     headless: false,
     viewport: {
-      width: 1500,
-      height: 700,
+      width: 1024,
+      height: 500,
     },
   }
   apiKey: process.env.BROWSERBASE_API_KEY /* API key for authentication */,
