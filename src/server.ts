@@ -173,7 +173,6 @@ app.post("/start_browser", async (req: Request, res: Response) => {
               });
             };
 
-            // Run initial update
             updatePlaceholders();
 
             // Set up observer for dynamic content
@@ -185,7 +184,6 @@ app.post("/start_browser", async (req: Request, res: Response) => {
               });
             });
 
-            // Start observing with appropriate config
             observer.observe(document.body, {
               childList: true,
               subtree: true,
@@ -194,46 +192,65 @@ app.post("/start_browser", async (req: Request, res: Response) => {
             });
           };
 
-          // Run setup immediately
           setupPage();
-
-          // Handle redirects and navigation
-          let lastUrl = window.location.href;
-          
-          // Create an observer instance to watch for URL changes
-          const urlObserver = new MutationObserver(() => {
-            if (window.location.href !== lastUrl) {
-              lastUrl = window.location.href;
-              // Small delay to ensure DOM is updated
-              setTimeout(setupPage, 100);
-            }
-          });
-
-          // Start observing the document with the configured parameters
-          urlObserver.observe(document.body, {
-            childList: true,
-            subtree: true
-          });
-
-          // Also watch for navigation events
-          window.addEventListener('popstate', setupPage);
-          window.addEventListener('pushstate', setupPage);
-          window.addEventListener('replacestate', setupPage);
-          
-          // Intercept history methods
-          const originalPushState = history.pushState;
-          const originalReplaceState = history.replaceState;
-          
-          history.pushState = function(...args: Parameters<typeof history.pushState>) {
-            originalPushState.apply(this, args);
-            setupPage();
-          };
-          
-          history.replaceState = function(...args: Parameters<typeof history.replaceState>) {
-            originalReplaceState.apply(this, args);
-            setupPage();
-          };
         });
+
+        // Function to apply our modifications after navigation
+        const applyModifications = async () => {
+          await stagehand?.page?.evaluate(() => {
+            // Set zoom using transform scale
+            const style = document.createElement('style');
+            style.textContent = `
+              html {
+                transform: scale(0.75);
+                transform-origin: top left;
+                width: 133.33%;
+                height: 133.33%;
+                position: relative;
+              }
+              body {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+              }
+            `;
+            
+            // Remove any existing injected style to prevent duplicates
+            const existingStyle = document.head.querySelector('style[data-injected="true"]');
+            if (existingStyle) {
+              existingStyle.remove();
+            }
+            
+            // Mark our style as injected
+            style.setAttribute('data-injected', 'true');
+            document.head.appendChild(style);
+
+            // Update placeholders
+            const inputs = document.querySelectorAll('input, textarea');
+            inputs.forEach(element => {
+              if (element instanceof HTMLElement) {
+                const placeholder = element.getAttribute('placeholder');
+                if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
+                  element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
+                }
+              }
+            });
+          });
+        };
+
+        // Set up navigation handling for various events
+        if (stagehand?.page) {
+          // Handle initial page load
+          stagehand.page.on('load', applyModifications);
+          
+          // Handle navigation events
+          stagehand.page.on('framenavigated', applyModifications);
+          
+          // Handle after navigation is complete
+          stagehand.page.on('domcontentloaded', applyModifications);
+        }
 
         // Navigate to Google
         console.log("Navigating to Google...");
@@ -312,7 +329,7 @@ app.post("/goto", async (req: Request, res: Response) => {
     }
 
     console.log("Navigating to:", url);
-    await stagehand.page.goto(url);
+    await stagehand.page.goto(url, { waitUntil: 'networkidle' });
     console.log("Navigation complete");
 
     // Ensure zoom level and placeholders are maintained after navigation
@@ -335,6 +352,15 @@ app.post("/goto", async (req: Request, res: Response) => {
           height: 100%;
         }
       `;
+      
+      // Remove any existing injected style to prevent duplicates
+      const existingStyle = document.head.querySelector('style[data-injected="true"]');
+      if (existingStyle) {
+        existingStyle.remove();
+      }
+      
+      // Mark our style as injected
+      style.setAttribute('data-injected', 'true');
       document.head.appendChild(style);
 
       // Update placeholders
@@ -348,6 +374,9 @@ app.post("/goto", async (req: Request, res: Response) => {
         }
       });
     });
+
+    // Wait a bit to ensure any redirects have completed
+    await stagehand.page.waitForLoadState('networkidle');
 
     return res.json({
       success: true,
