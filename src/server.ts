@@ -492,9 +492,9 @@ app.post("/act", async (req: Request, res: Response) => {
 
     console.log("Creating agent...");
     // Determine provider based on available keys
-    const provider = process.env.ANTHROPIC_API_KEY ? "anthropic" : "openai";
-    const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
-    const model = provider === "anthropic" ? "claude-3-5-sonnet-20241022" : "computer-use-preview";
+    const provider = process.env.OPENAI_API_KEY ? "openai" : "anthropic";
+    const apiKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
+    const model = provider === "openai" ? "computer-use-preview" : "claude-3-7-sonnet-20250219";
 
     // Use non-null assertion for stagehand
     const agent = stagehand!.agent({
