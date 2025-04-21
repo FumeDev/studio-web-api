@@ -39,195 +39,125 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   });
 });
 
-// ---- 1. Start Browser Endpoint ----
-app.post("/start_browser", async (req: Request, res: Response) => {
-  try {
-    // If browser is already running, check if it's still responsive
-    if (stagehand?.page) {
-      try {
-        // Test if the browser is still responsive by evaluating a simple expression
-        await stagehand.page.evaluate(() => true);
-        // If we got here, the browser is still responsive
-        return res.json({
-          success: true,
-          message: "Using existing browser session",
-        });
-      } catch (error) {
-        console.log("Existing browser session is no longer responsive, starting a new one");
-        // Clean up the stale reference
-        stagehand = null;
-        currentConfig = null;
-      }
+// ---- Reusable Browser Initialization Function ----
+async function ensureBrowserIsRunning(): Promise<void> {
+  // If browser is already running and responsive, do nothing
+  if (stagehand?.page) {
+    try {
+      await stagehand.page.evaluate(() => true);
+      console.log("Using existing browser session.");
+      return; // Browser is fine
+    } catch (error) {
+      console.log("Existing browser session is no longer responsive, starting a new one");
+      // Clean up the stale reference
+      await stagehand?.close().catch(err => console.error("Error closing stale stagehand:", err));
+      stagehand = null;
+      currentConfig = null;
     }
+  }
 
-    // Build LLM config based on environment variables
-    let llmConfig;
-    if (process.env.ANTHROPIC_API_KEY) {
-      llmConfig = {
-        provider: "anthropic",
-        anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-        modelName: "claude-3-5-sonnet-20241022",
-        temperature: 0.7,
-        maxTokens: 4096,
-      };
-    } else if (process.env.OPENAI_API_KEY) {
-      llmConfig = {
-        provider: "openai",
-        openaiApiKey: process.env.OPENAI_API_KEY,
-        modelName: "gpt-4o",
-        temperature: 0.7,
-        maxTokens: 4096,
-      };
-    } else {
-      throw new Error(
-        "Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables"
-      );
-    }
-
-    // Build the complete config with updated browser settings
-    let baseConfig = {
-      ...StagehandConfig, // Use all base config
-      headless: false, // Set headless mode directly
-      llm: llmConfig, // Add LLM config properly
-      env: "LOCAL",
-      domSettleTimeoutMs: 300_000,
-      logger: (message: any) => console.log(message),
-      debugDom: false,
-      // Add launch options for the browser
-      launchOptions: {
-        args: ["--start-maximized"]
-      }
+  // Build LLM config based on environment variables
+  let llmConfig;
+  if (process.env.ANTHROPIC_API_KEY) {
+    llmConfig = {
+      provider: "anthropic",
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      modelName: "claude-3-5-sonnet-20241022",
+      temperature: 0.7,
+      maxTokens: 4096,
     };
+  } else if (process.env.OPENAI_API_KEY) {
+    llmConfig = {
+      provider: "openai",
+      openaiApiKey: process.env.OPENAI_API_KEY,
+      modelName: "gpt-4o",
+      temperature: 0.7,
+      maxTokens: 4096,
+    };
+  } else {
+    throw new Error(
+      "Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables"
+    );
+  }
 
-    // Ensure headless mode is properly set
-    currentConfig = ensureHeadlessConfig(baseConfig);
+  // Build the complete config with updated browser settings
+  let baseConfig = {
+    ...StagehandConfig, // Use all base config
+    headless: false, // Set headless mode directly
+    llm: llmConfig, // Add LLM config properly
+    env: "LOCAL",
+    domSettleTimeoutMs: 300_000,
+    logger: (message: any) => console.log(message),
+    debugDom: false,
+    // Add launch options for the browser
+    launchOptions: {
+      args: ["--start-maximized"]
+    }
+  };
 
-    // Log the browser configuration
-    logBrowserConfig(currentConfig);
+  // Ensure headless mode is properly set
+  currentConfig = ensureHeadlessConfig(baseConfig);
 
-    console.log("Creating Stagehand with config:", {
-      ...currentConfig,
-      modelClientOptions: {
-        apiKey: "***", // Hide the API key
-      },
-    });
+  // Log the browser configuration
+  logBrowserConfig(currentConfig);
 
-    // Create a fresh Stagehand instance with the new config
-    console.log("Creating new Stagehand instance...");
+  console.log("Creating Stagehand with config:", {
+    ...currentConfig,
+    modelClientOptions: {
+      apiKey: "***", // Hide the API key
+    },
+  });
 
-    // Try multiple times to initialize the browser, with a delay between attempts
-    const maxRetries = 3;
-    let lastError = null;
+  // Create a fresh Stagehand instance with the new config
+  console.log("Creating new Stagehand instance...");
 
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        console.log(`Browser launch attempt ${attempt + 1}/${maxRetries}`);
-        stagehand = new Stagehand(currentConfig);
+  // Try multiple times to initialize the browser, with a delay between attempts
+  const maxRetries = 3;
+  let lastError = null;
 
-        // Initialize (launch browser, etc.)
-        await stagehand.init();
-        console.log("Stagehand initialized successfully");
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      console.log(`Browser launch attempt ${attempt + 1}/${maxRetries}`);
+      stagehand = new Stagehand(currentConfig);
 
-        // Add initialization script to maintain zoom level and modify placeholders
-        await stagehand.page.addInitScript(() => {
-          const setupPage = () => {
-            // Set zoom using transform scale instead of zoom property
-            const style = document.createElement('style');
-            style.textContent = `
-              html {
-                transform: scale(0.75);
-                transform-origin: top left;
-                width: 133.33%;
-                height: 133.33%;
-                position: relative;
-              }
-              body {
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100%;
-                height: 100%;
-              }
-            `;
-            
-            // Remove any existing injected style to prevent duplicates
-            const existingStyle = document.head.querySelector('style[data-injected="true"]');
-            if (existingStyle) {
-              existingStyle.remove();
+      // Initialize (launch browser, etc.)
+      await stagehand.init();
+      console.log("Stagehand initialized successfully");
+
+      // Add initialization script to maintain zoom level and modify placeholders
+      await stagehand.page.addInitScript(() => {
+        const setupPage = () => {
+          // Set zoom using transform scale instead of zoom property
+          const style = document.createElement('style');
+          style.textContent = `
+            html {
+              transform: scale(0.75);
+              transform-origin: top left;
+              width: 133.33%;
+              height: 133.33%;
+              position: relative;
             }
-            
-            // Mark our style as injected
-            style.setAttribute('data-injected', 'true');
-            document.head.appendChild(style);
-
-            // Function to update placeholders
-            const updatePlaceholders = () => {
-              const inputs = document.querySelectorAll('input, textarea');
-              inputs.forEach(element => {
-                if (element instanceof HTMLElement) {
-                  const placeholder = element.getAttribute('placeholder');
-                  if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
-                    element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
-                  }
-                }
-              });
-            };
-
-            updatePlaceholders();
-
-            // Set up observer for dynamic content
-            const observer = new MutationObserver((mutations) => {
-              mutations.forEach(mutation => {
-                if (mutation.addedNodes.length > 0) {
-                  updatePlaceholders();
-                }
-              });
-            });
-
-            observer.observe(document.body, {
-              childList: true,
-              subtree: true,
-              attributes: true,
-              attributeFilter: ['placeholder']
-            });
-          };
-
-          setupPage();
-        });
-
-        // Function to apply our modifications after navigation
-        const applyModifications = async () => {
-          await stagehand?.page?.evaluate(() => {
-            // Set zoom using transform scale
-            const style = document.createElement('style');
-            style.textContent = `
-              html {
-                transform: scale(0.75);
-                transform-origin: top left;
-                width: 133.33%;
-                height: 133.33%;
-                position: relative;
-              }
-              body {
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100%;
-                height: 100%;
-              }
-            `;
-            
-            // Remove any existing injected style to prevent duplicates
-            const existingStyle = document.head.querySelector('style[data-injected="true"]');
-            if (existingStyle) {
-              existingStyle.remove();
+            body {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              height: 100%;
             }
-            
-            // Mark our style as injected
-            style.setAttribute('data-injected', 'true');
-            document.head.appendChild(style);
+          `;
+          
+          // Remove any existing injected style to prevent duplicates
+          const existingStyle = document.head.querySelector('style[data-injected="true"]');
+          if (existingStyle) {
+            existingStyle.remove();
+          }
+          
+          // Mark our style as injected
+          style.setAttribute('data-injected', 'true');
+          document.head.appendChild(style);
 
-            // Update placeholders
+          // Function to update placeholders
+          const updatePlaceholders = () => {
             const inputs = document.querySelectorAll('input, textarea');
             inputs.forEach(element => {
               if (element instanceof HTMLElement) {
@@ -237,79 +167,156 @@ app.post("/start_browser", async (req: Request, res: Response) => {
                 }
               }
             });
+          };
+
+          updatePlaceholders();
+
+          // Set up observer for dynamic content
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+              if (mutation.addedNodes.length > 0) {
+                updatePlaceholders();
+              }
+            });
+          });
+
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['placeholder']
           });
         };
 
-        // Set up navigation handling for various events
-        if (stagehand?.page) {
-          // Handle initial page load
-          stagehand.page.on('load', applyModifications);
+        setupPage();
+      });
+
+      // Function to apply our modifications after navigation
+      const applyModifications = async () => {
+        await stagehand?.page?.evaluate(() => {
+          // Set zoom using transform scale
+          const style = document.createElement('style');
+          style.textContent = `
+            html {
+              transform: scale(0.75);
+              transform-origin: top left;
+              width: 133.33%;
+              height: 133.33%;
+              position: relative;
+            }
+            body {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              height: 100%;
+            }
+          `;
           
-          // Handle navigation events
-          stagehand.page.on('framenavigated', applyModifications);
-          
-          // Handle after navigation is complete
-          stagehand.page.on('domcontentloaded', applyModifications);
-        }
-
-        // Navigate to Google
-        console.log("Navigating to Google...");
-        await stagehand.page.goto("https://www.google.com");
-        console.log("Navigation to Google complete");
-
-        // Get screen dimensions and set viewport to maximize window
-        try {
-          const screen = await stagehand.page.evaluate(() => {
-            return { width: window.screen.width, height: window.screen.height };
-          });
-          console.log(`Screen dimensions: ${screen.width}x${screen.height}`);
-          await stagehand.page.setViewportSize({ width: 1024, height: 500 });
-          console.log("Browser window maximized.");
-        } catch (vpError) {
-          console.warn("Could not maximize browser window:", vpError);
-          // Continue even if maximizing fails
-        }
-
-        return res.json({
-          success: true,
-          message: `Browser started successfully on attempt ${
-            attempt + 1
-          } and navigated to Google`,
-        });
-      } catch (error) {
-        lastError = error;
-        console.error(`Attempt ${attempt + 1} failed:`, error);
-
-        // Clean up failed instance
-        if (stagehand) {
-          try {
-            await stagehand.close();
-          } catch (closeError) {
-            console.error("Error closing stagehand:", closeError);
+          // Remove any existing injected style to prevent duplicates
+          const existingStyle = document.head.querySelector('style[data-injected="true"]');
+          if (existingStyle) {
+            existingStyle.remove();
           }
-          stagehand = null;
-        }
+          
+          // Mark our style as injected
+          style.setAttribute('data-injected', 'true');
+          document.head.appendChild(style);
 
-        // Wait before retrying
-        if (attempt < maxRetries - 1) {
-          console.log(`Waiting 5 seconds before retry ${attempt + 2}...`);
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          // Update placeholders
+          const inputs = document.querySelectorAll('input, textarea');
+          inputs.forEach(element => {
+            if (element instanceof HTMLElement) {
+              const placeholder = element.getAttribute('placeholder');
+              if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
+                element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
+              }
+            }
+          });
+        });
+      };
+
+      // Set up navigation handling for various events
+      if (stagehand?.page) {
+        // Handle initial page load
+        stagehand.page.on('load', applyModifications);
+        
+        // Handle navigation events
+        stagehand.page.on('framenavigated', applyModifications);
+        
+        // Handle after navigation is complete
+        stagehand.page.on('domcontentloaded', applyModifications);
+      }
+
+      // Navigate to Google initially
+      console.log("Navigating to Google...");
+      await stagehand.page.goto("https://www.google.com");
+      console.log("Initial navigation to Google complete");
+
+      // Get screen dimensions and set viewport to maximize window
+      try {
+        const screen = await stagehand.page.evaluate(() => {
+          return { width: window.screen.width, height: window.screen.height };
+        });
+        console.log(`Screen dimensions: ${screen.width}x${screen.height}`);
+        await stagehand.page.setViewportSize({ width: 1024, height: 500 });
+        console.log("Browser window viewport set.");
+      } catch (vpError) {
+        console.warn("Could not set browser window viewport:", vpError);
+        // Continue even if setting viewport fails
+      }
+
+      // Successfully initialized
+      return;
+
+    } catch (error) {
+      lastError = error;
+      console.error(`Attempt ${attempt + 1} failed:`, error);
+
+      // Clean up failed instance
+      if (stagehand) {
+        try {
+          await stagehand.close();
+        } catch (closeError) {
+          console.error("Error closing stagehand:", closeError);
         }
+        stagehand = null;
+      }
+
+      // Wait before retrying
+      if (attempt < maxRetries - 1) {
+        console.log(`Waiting 5 seconds before retry ${attempt + 2}...`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
     }
+  }
 
-    // If we get here, all attempts failed
-    throw (
-      lastError ||
-      new Error("Failed to initialize browser after multiple attempts")
-    );
+  // If we get here, all attempts failed
+  console.error("Failed to initialize browser after multiple attempts:", lastError);
+  stagehand = null; // Ensure stagehand is null on failure
+  currentConfig = null;
+  throw (
+    lastError ||
+    new Error("Failed to initialize browser after multiple attempts")
+  );
+}
+
+// ---- 1. Start Browser Endpoint ----
+app.post("/start_browser", async (req: Request, res: Response) => {
+  try {
+    // Ensure the browser is running using the reusable function
+    await ensureBrowserIsRunning();
+
+    // If we got here, the browser is running (either new or existing)
+    return res.json({
+      success: true,
+      message: "Browser session is active",
+    });
   } catch (error: unknown) {
-    console.error("Error starting browser:", error);
-    stagehand = null; // Reset on failure
-    currentConfig = null;
+    console.error("Error in start_browser endpoint:", error);
     return res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : "Failed to start browser",
       details: error instanceof Error ? error.stack : undefined,
     });
   }
@@ -318,22 +325,23 @@ app.post("/start_browser", async (req: Request, res: Response) => {
 // ---- 2. "Goto" Endpoint ----
 app.post("/goto", async (req: Request, res: Response) => {
   try {
-    // Must have an initialized Stagehand
-    if (!stagehand?.page) {
-      throw new Error("Browser not started");
-    }
+    // Ensure the browser is running using the reusable function
+    await ensureBrowserIsRunning();
 
+    // Now we know stagehand and stagehand.page are available
     const { url } = req.body;
     if (!url) {
       throw new Error("URL is required");
     }
 
     console.log("Navigating to:", url);
-    await stagehand.page.goto(url, { waitUntil: 'networkidle' });
+    // Use non-null assertion as ensureBrowserIsRunning guarantees it
+    await stagehand!.page.goto(url, { waitUntil: 'networkidle' });
     console.log("Navigation complete");
 
     // Ensure zoom level and placeholders are maintained after navigation
-    await stagehand.page.evaluate(() => {
+    // Use non-null assertion here as well
+    await stagehand!.page.evaluate(() => {
       // Set zoom using transform scale
       const style = document.createElement('style');
       style.textContent = `
@@ -376,7 +384,7 @@ app.post("/goto", async (req: Request, res: Response) => {
     });
 
     // Wait a bit to ensure any redirects have completed
-    await stagehand.page.waitForLoadState('networkidle');
+    await stagehand!.page.waitForLoadState('networkidle');
 
     return res.json({
       success: true,
@@ -386,7 +394,7 @@ app.post("/goto", async (req: Request, res: Response) => {
     console.error("Error in goto endpoint:", error);
     return res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : "Unknown error during navigation",
       details: error instanceof Error ? error.stack : undefined,
     });
   }
@@ -395,13 +403,12 @@ app.post("/goto", async (req: Request, res: Response) => {
 // ---- 2.5. "Go Back" Endpoint ----
 app.post("/go_back", async (req: Request, res: Response) => {
   try {
-    // Must have an initialized Stagehand
-    if (!stagehand?.page) {
-      throw new Error("Browser not started");
-    }
+    // Ensure the browser is running using the reusable function
+    await ensureBrowserIsRunning();
 
     console.log("Navigating back...");
-    await stagehand.page.goBack();
+    // Use non-null assertion
+    await stagehand!.page.goBack();
     console.log("Navigation back complete");
 
     return res.json({
@@ -412,7 +419,7 @@ app.post("/go_back", async (req: Request, res: Response) => {
     console.error("Error in go_back endpoint:", error);
     return res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : "Unknown error during go back",
       details: error instanceof Error ? error.stack : undefined,
     });
   }
@@ -421,16 +428,15 @@ app.post("/go_back", async (req: Request, res: Response) => {
 // ---- 3. Screenshot Endpoint ----
 app.get("/screenshot", async (req: Request, res: Response) => {
   try {
-    if (!stagehand?.page) {
-      throw new Error("Browser not started");
-    }
+    // Ensure the browser is running using the reusable function
+    await ensureBrowserIsRunning();
 
-    // Get current URL and title
-    const currentUrl = stagehand.page.url();
-    const currentTitle = await stagehand.page.title();
+    // Get current URL and title (use non-null assertion)
+    const currentUrl = stagehand!.page.url();
+    const currentTitle = await stagehand!.page.title();
 
     // Capture only the current viewport
-    const screenshotBuffer = await stagehand.page.screenshot({
+    const screenshotBuffer = await stagehand!.page.screenshot({
       fullPage: false,
       scale: "css",
       animations: "disabled",
@@ -453,7 +459,7 @@ app.get("/screenshot", async (req: Request, res: Response) => {
     console.error("Error taking screenshot:", error);
     return res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : "Unknown error during screenshot",
       details: error instanceof Error ? error.stack : undefined,
     });
   }
@@ -462,14 +468,13 @@ app.get("/screenshot", async (req: Request, res: Response) => {
 // ---- 4. "Act" Endpoint ----
 app.post("/act", async (req: Request, res: Response) => {
   try {
-    // Must have a valid browser session
-    if (!stagehand?.page) {
-      throw new Error("Browser not started");
-    }
-    // Must have a valid OpenAI API key
-    if (!process.env.OPENAI_API_KEY) {
+    // Ensure the browser is running using the reusable function
+    await ensureBrowserIsRunning();
+
+    // Must have a valid API key (check remains)
+    if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       throw new Error(
-        "OPENAI_API_KEY must be set in environment variables for agent functionality"
+        "Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables for agent functionality"
       );
     }
 
@@ -478,17 +483,23 @@ app.post("/act", async (req: Request, res: Response) => {
       throw new Error("Action description is required");
     }
 
-    // If a URL is provided, navigate first
+    // If a URL is provided, navigate first (use non-null assertion)
     if (url) {
       console.log("Navigating to:", url);
-      await stagehand.page.goto(url);
+      await stagehand!.page.goto(url);
       console.log("Navigation complete");
     }
 
-    console.log("Creating agent with OpenAI computer-use-preview model...");
-    const agent = stagehand.agent({
-      provider: "openai",
-      model: "computer-use-preview",
+    console.log("Creating agent...");
+    // Determine provider based on available keys
+    const provider = process.env.ANTHROPIC_API_KEY ? "anthropic" : "openai";
+    const apiKey = process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY;
+    const model = provider === "anthropic" ? "claude-3-5-sonnet-20241022" : "computer-use-preview";
+
+    // Use non-null assertion for stagehand
+    const agent = stagehand!.agent({
+      provider: provider,
+      model: model,
       instructions: `Instructions:
 You are a persistent AI agent that operates a web browser to perform the tasks.
 You **precisely** execute the task the user is asking for.
@@ -506,7 +517,7 @@ Here are some example pitfalls you might fall into and how to tackle them:
 - Mistaking the placeholder in a text input for the actual text -> If you see a text input with a half transparent text inside and it has '(PLACEHOLDER)' in the end, it's most likely a placeholder. You can usually click on it to select it and then type your own text without needing to clear it first.
 - Not being able to select an option in a dropdown -> Click on the dropdown, even if you don't see the options appear, type the option you want to select and press RETURN. Trust that the option will be selected even if you could not see the options dropping down. You can confirm the right option is selected by looking at the text of the selected option after you press RETURN.`,
       options: {
-        apiKey: process.env.OPENAI_API_KEY
+        apiKey: apiKey
       }
     });
 
@@ -524,7 +535,7 @@ Here are some example pitfalls you might fall into and how to tackle them:
     console.error("Error in act endpoint:", error);
     return res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: error instanceof Error ? error.message : "Unknown error during act",
       details: error instanceof Error ? error.stack : undefined,
     });
   }
