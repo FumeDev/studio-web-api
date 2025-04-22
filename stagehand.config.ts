@@ -13,7 +13,7 @@ const StagehandConfig: ConstructorParams = {
       width: 1200,
       height: 600,
     },
-  }
+  },
   apiKey: process.env.BROWSERBASE_API_KEY /* API key for authentication */,
   projectId: process.env.BROWSERBASE_PROJECT_ID /* Project identifier */,
   debugDom: undefined /* Enable DOM debugging features */,
