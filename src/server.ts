@@ -40,7 +40,7 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // ---- Reusable Browser Initialization Function ----
-async function ensureBrowserIsRunning(): Promise<void> {
+async function ensureBrowserIsRunning(viewportSize: { width: number; height: number }): Promise<void> {
   // If browser is already running and responsive, do nothing
   if (stagehand?.page) {
     try {
@@ -259,7 +259,7 @@ async function ensureBrowserIsRunning(): Promise<void> {
           return { width: window.screen.width, height: window.screen.height };
         });
         console.log(`Screen dimensions: ${screen.width}x${screen.height}`);
-        await stagehand.page.setViewportSize({ width: 1024, height: 500 });
+        await stagehand.page.setViewportSize(viewportSize);
         console.log("Browser window viewport set.");
       } catch (vpError) {
         console.warn("Could not set browser window viewport:", vpError);
@@ -304,13 +304,21 @@ async function ensureBrowserIsRunning(): Promise<void> {
 // ---- 1. Start Browser Endpoint ----
 app.post("/start_browser", async (req: Request, res: Response) => {
   try {
+    const { isLarge = false } = req.body || {};
+    
+    // Set viewport size based on isLarge parameter
+    const viewportSize = isLarge 
+      ? { width: 1920, height: 1080 }  // Larger viewport for isLarge=true
+      : { width: 1024, height: 500 };  // Default viewport size
+    
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning();
+    await ensureBrowserIsRunning(viewportSize);
 
     // If we got here, the browser is running (either new or existing)
     return res.json({
       success: true,
       message: "Browser session is active",
+      viewport: viewportSize
     });
   } catch (error: unknown) {
     console.error("Error in start_browser endpoint:", error);
@@ -326,7 +334,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
 app.post("/goto", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning();
+    await ensureBrowserIsRunning({ width: 1024, height: 500 });
 
     // Now we know stagehand and stagehand.page are available
     const { url } = req.body;
@@ -404,7 +412,7 @@ app.post("/goto", async (req: Request, res: Response) => {
 app.post("/go_back", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning();
+    await ensureBrowserIsRunning({ width: 1024, height: 500 });
 
     console.log("Navigating back...");
     // Use non-null assertion
@@ -429,7 +437,7 @@ app.post("/go_back", async (req: Request, res: Response) => {
 app.get("/screenshot", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning();
+    await ensureBrowserIsRunning({ width: 1024, height: 500 });
 
     // Get current URL and title (use non-null assertion)
     const currentUrl = stagehand!.page.url();
@@ -469,7 +477,7 @@ app.get("/screenshot", async (req: Request, res: Response) => {
 app.post("/act", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning();
+    await ensureBrowserIsRunning({ width: 1024, height: 500 });
 
     // Must have a valid API key (check remains)
     if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
