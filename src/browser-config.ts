@@ -8,34 +8,27 @@
  * @returns The updated browser configuration
  */
 export function ensureHeadlessConfig(config: any): any {
-  // Make a deep copy of the config
   const updatedConfig = JSON.parse(JSON.stringify(config));
-  
-  // Check if running under PM2
-  const isRunningUnderPM2 = true;
-  
-  // If running under PM2, force headless mode
-  if (isRunningUnderPM2) {
-    console.log('Running under PM2, forcing headless mode');
-    updatedConfig.browser = updatedConfig.browser || {};
+  const headlessEnabled = config.headless !== false;
+  updatedConfig.browser = updatedConfig.browser || {};
+  updatedConfig.browser.args = updatedConfig.browser.args || [];
+  updatedConfig.launchOptions = updatedConfig.launchOptions || {};
+  updatedConfig.launchOptions.env = updatedConfig.launchOptions.env || {};
+
+  if (headlessEnabled) {
     updatedConfig.browser.headless = "new";
-    updatedConfig.browser.args = updatedConfig.browser.args || [];
-    if (!updatedConfig.browser.args.includes('--headless=new')) {
-      updatedConfig.browser.args.push('--headless=new');
+    if (!updatedConfig.browser.args.includes("--headless=new")) {
+      updatedConfig.browser.args.push("--headless=new");
     }
-    updatedConfig.launchOptions = updatedConfig.launchOptions || {};
-    updatedConfig.launchOptions.env = updatedConfig.launchOptions.env || {};
-    updatedConfig.launchOptions.env.PUPPETEER_HEADLESS = 'new';
+    updatedConfig.launchOptions.env.PUPPETEER_HEADLESS = "new";
   } else {
-    // Not running under PM2, use the configured headless setting
-    updatedConfig.browser = updatedConfig.browser || {};
-    updatedConfig.browser.headless = config.headless === false ? false : "new";
-    updatedConfig.browser.args = updatedConfig.browser.args || [];
-    if (config.headless !== false && !updatedConfig.browser.args.includes('--headless=new')) {
-      updatedConfig.browser.args.push('--headless=new');
+    updatedConfig.browser.headless = false;
+    updatedConfig.browser.args = updatedConfig.browser.args.filter((arg: string) => !arg.startsWith("--headless"));
+    if ("PUPPETEER_HEADLESS" in updatedConfig.launchOptions.env) {
+      delete updatedConfig.launchOptions.env.PUPPETEER_HEADLESS;
     }
   }
-  
+
   return updatedConfig;
 }
 
