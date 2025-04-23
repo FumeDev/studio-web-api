@@ -22,8 +22,8 @@ const BUNNY_REGION = process.env.BUNNY_REGION || 'la';
 const BUNNY_API_KEY = process.env.BUNNY_API_KEY || '47be9f34-1258-4d6b-8c3f9a2965c3-4730-4e3f';
 const BUNNY_STORAGE_URL = `https://${BUNNY_REGION}.storage.bunnycdn.com/${BUNNY_STORAGE_ZONE}/`;
 
-const DEFAULT_VIEWPORT_SIZE = { width: 1024, height: 500 };
-const LARGE_VIEWPORT_SIZE = { width: 1920, height: 1080 };
+const DEFAULT_VIEWPORT_SIZE = { width: 1890, height: 1024 };
+const LARGE_VIEWPORT_SIZE = { width: 1890, height: 1024 };
 
 /**
  * Uploads a file to BunnyCDN storage
