@@ -22,6 +22,9 @@ const BUNNY_REGION = process.env.BUNNY_REGION || 'la';
 const BUNNY_API_KEY = process.env.BUNNY_API_KEY || '47be9f34-1258-4d6b-8c3f9a2965c3-4730-4e3f';
 const BUNNY_STORAGE_URL = `https://${BUNNY_REGION}.storage.bunnycdn.com/${BUNNY_STORAGE_ZONE}/`;
 
+const DEFAULT_VIEWPORT_SIZE = { width: 1024, height: 500 };
+const LARGE_VIEWPORT_SIZE = { width: 1920, height: 1080 };
+
 /**
  * Uploads a file to BunnyCDN storage
  * @param {string} localFilePath - Path to the file on local filesystem
@@ -383,12 +386,23 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
 // ---- 1. Start Browser Endpoint ----
 app.post("/start_browser", async (req: Request, res: Response) => {
   try {
-    const { isLarge = false } = req.body || {};
+    const { isLarge = false, width, height } = req.body || {};
     
-    // Set viewport size based on isLarge parameter
-    const viewportSize = isLarge 
-      ? { width: 1920, height: 1080 }  // Larger viewport for isLarge=true
-      : { width: 1024, height: 500 };  // Default viewport size
+    // Set viewport size based on provided dimensions or isLarge parameter
+    let viewportSize;
+    
+    if (width && height) {
+      // Use explicit dimensions if provided
+      viewportSize = { 
+        width: Number(width), 
+        height: Number(height) 
+      };
+    } else {
+      // Fall back to isLarge parameter
+      viewportSize = isLarge 
+        ? LARGE_VIEWPORT_SIZE  // Larger viewport for isLarge=true
+        : DEFAULT_VIEWPORT_SIZE;  // Default viewport size
+    }
     
     // Ensure the browser is running using the reusable function
     await ensureBrowserIsRunning(viewportSize);
@@ -413,7 +427,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
 app.post("/goto", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning({ width: 1024, height: 500 });
+    await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
 
     // Now we know stagehand and stagehand.page are available
     const { url } = req.body;
@@ -521,7 +535,7 @@ app.post("/goto", async (req: Request, res: Response) => {
 app.post("/go_back", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning({ width: 1024, height: 500 });
+    await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
 
     console.log("Navigating back...");
     // Use non-null assertion
@@ -546,7 +560,7 @@ app.post("/go_back", async (req: Request, res: Response) => {
 app.get("/screenshot", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning({ width: 1024, height: 500 });
+    await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
 
     // Make sure page is ready
     try {
@@ -636,7 +650,7 @@ app.get("/screenshot", async (req: Request, res: Response) => {
 app.post("/act", async (req: Request, res: Response) => {
   try {
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning({ width: 1024, height: 500 });
+    await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
 
     // Must have a valid API key (check remains)
     if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) {
