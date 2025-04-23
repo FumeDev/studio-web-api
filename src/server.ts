@@ -10,8 +10,61 @@ import * as fs from "fs";
 import dotenv from "dotenv";
 import Docker from 'dockerode';
 import { ProcessManager } from './executeCommand.js';
+import axios from 'axios';
+import { createReadStream } from 'fs';
+import { Readable } from 'stream';
 
 dotenv.config();
+
+// BunnyCDN Configuration
+const BUNNY_STORAGE_ZONE = process.env.BUNNY_STORAGE_ZONE || 'fume';
+const BUNNY_REGION = process.env.BUNNY_REGION || 'la';
+const BUNNY_API_KEY = process.env.BUNNY_API_KEY || '47be9f34-1258-4d6b-8c3f9a2965c3-4730-4e3f';
+const BUNNY_STORAGE_URL = `https://${BUNNY_REGION}.storage.bunnycdn.com/${BUNNY_STORAGE_ZONE}/`;
+
+/**
+ * Uploads a file to BunnyCDN storage
+ * @param {string} localFilePath - Path to the file on local filesystem
+ * @param {string} remoteFilePath - Destination path in BunnyCDN (without storage zone prefix)
+ * @returns {Promise<{success: boolean, url: string, error?: string}>}
+ */
+async function uploadToBunnyStorage(localFilePath: string, remoteFilePath: string): Promise<{success: boolean, url: string, error?: string}> {
+  try {
+    // Ensure the file exists
+    if (!fs.existsSync(localFilePath)) {
+      throw new Error(`File not found: ${localFilePath}`);
+    }
+
+    // Create file read stream
+    const fileStream = createReadStream(localFilePath);
+    
+    // Full URL for the file in BunnyCDN
+    const uploadUrl = `${BUNNY_STORAGE_URL}${remoteFilePath}`;
+    
+    // Upload the file
+    await axios.put(uploadUrl, fileStream, {
+      headers: {
+        'AccessKey': BUNNY_API_KEY,
+        'Content-Type': 'application/octet-stream',
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    });
+
+    // Return success with the CDN URL
+    return {
+      success: true,
+      url: `https://${BUNNY_STORAGE_ZONE}.b-cdn.net/${remoteFilePath}`
+    };
+  } catch (error) {
+    console.error('BunnyCDN upload error:', error);
+    return {
+      success: false,
+      url: '',
+      error: error instanceof Error ? error.message : 'Unknown error during upload'
+    };
+  }
+}
 
 const execAsync = promisify(exec);
 
@@ -50,7 +103,7 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
     } catch (error) {
       console.log("Existing browser session is no longer responsive, starting a new one");
       // Clean up the stale reference
-      await stagehand?.close().catch(err => console.error("Error closing stale stagehand:", err));
+      await stagehand?.close().catch((err: Error) => console.error("Error closing stale stagehand:", err));
       stagehand = null;
       currentConfig = null;
     }
@@ -193,59 +246,85 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
 
       // Function to apply our modifications after navigation
       const applyModifications = async () => {
-        await stagehand?.page?.evaluate(() => {
-          // Set zoom using transform scale
-          const style = document.createElement('style');
-          style.textContent = `
-            html {
-              transform: scale(0.75);
-              transform-origin: top left;
-              width: 133.33%;
-              height: 133.33%;
-              position: relative;
-            }
-            body {
-              position: absolute;
-              left: 0;
-              top: 0;
-              width: 100%;
-              height: 100%;
-            }
-          `;
-          
-          // Remove any existing injected style to prevent duplicates
-          const existingStyle = document.head.querySelector('style[data-injected="true"]');
-          if (existingStyle) {
-            existingStyle.remove();
+        try {
+          // Check if page is valid before proceeding
+          if (!stagehand?.page) {
+            console.log("Page not available, skipping modifications");
+            return;
           }
           
-          // Mark our style as injected
-          style.setAttribute('data-injected', 'true');
-          document.head.appendChild(style);
-
-          // Update placeholders
-          const inputs = document.querySelectorAll('input, textarea');
-          inputs.forEach(element => {
-            if (element instanceof HTMLElement) {
-              const placeholder = element.getAttribute('placeholder');
-              if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
-                element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
+          // Wait for page to be ready and stable
+          await stagehand.page.waitForLoadState('domcontentloaded').catch((e: Error) => console.log("Wait for load state error:", e));
+          
+          // Verify page is still available after waiting
+          if (!stagehand?.page) return;
+          
+          await stagehand.page.evaluate(() => {
+            // Set zoom using transform scale
+            const style = document.createElement('style');
+            style.textContent = `
+              html {
+                transform: scale(0.75);
+                transform-origin: top left;
+                width: 133.33%;
+                height: 133.33%;
+                position: relative;
               }
+              body {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+              }
+            `;
+            
+            // Remove any existing injected style to prevent duplicates
+            const existingStyle = document.head.querySelector('style[data-injected="true"]');
+            if (existingStyle) {
+              existingStyle.remove();
             }
+            
+            // Mark our style as injected
+            style.setAttribute('data-injected', 'true');
+            document.head.appendChild(style);
+
+            // Update placeholders
+            const inputs = document.querySelectorAll('input, textarea');
+            inputs.forEach(element => {
+              if (element instanceof HTMLElement) {
+                const placeholder = element.getAttribute('placeholder');
+                if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
+                  element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
+                }
+              }
+            });
+          }).catch((err: Error) => {
+            // Silently catch errors during page modification
+            console.log("Page modification error (non-fatal):", err.message);
           });
-        });
+        } catch (error) {
+          // Don't let applyModifications errors crash the app
+          console.log("Error in applyModifications (continuing):", error);
+        }
       };
 
       // Set up navigation handling for various events
       if (stagehand?.page) {
-        // Handle initial page load
-        stagehand.page.on('load', applyModifications);
+        // Handle initial page load with more robust error handling
+        stagehand.page.on('load', () => {
+          setTimeout(applyModifications, 500); // Slight delay to ensure page is stable
+        });
         
-        // Handle navigation events
-        stagehand.page.on('framenavigated', applyModifications);
+        // Handle navigation events with more robust error handling
+        stagehand.page.on('framenavigated', () => {
+          setTimeout(applyModifications, 500); // Slight delay to ensure page is stable
+        });
         
-        // Handle after navigation is complete
-        stagehand.page.on('domcontentloaded', applyModifications);
+        // Handle after navigation is complete with more robust error handling  
+        stagehand.page.on('domcontentloaded', () => {
+          setTimeout(applyModifications, 500); // Slight delay to ensure page is stable
+        });
       }
 
       // Navigate to Google initially
@@ -343,56 +422,86 @@ app.post("/goto", async (req: Request, res: Response) => {
     }
 
     console.log("Navigating to:", url);
-    // Use non-null assertion as ensureBrowserIsRunning guarantees it
-    await stagehand!.page.goto(url, { waitUntil: 'networkidle' });
-    console.log("Navigation complete");
-
-    // Ensure zoom level and placeholders are maintained after navigation
-    // Use non-null assertion here as well
-    await stagehand!.page.evaluate(() => {
-      // Set zoom using transform scale
-      const style = document.createElement('style');
-      style.textContent = `
-        html {
-          transform: scale(0.75);
-          transform-origin: top left;
-          width: 133.33%;
-          height: 133.33%;
-          position: relative;
-        }
-        body {
-          position: absolute;
-          left: 0;
-          top: 0;
-          width: 100%;
-          height: 100%;
-        }
-      `;
-      
-      // Remove any existing injected style to prevent duplicates
-      const existingStyle = document.head.querySelector('style[data-injected="true"]');
-      if (existingStyle) {
-        existingStyle.remove();
-      }
-      
-      // Mark our style as injected
-      style.setAttribute('data-injected', 'true');
-      document.head.appendChild(style);
-
-      // Update placeholders
-      const inputs = document.querySelectorAll('input, textarea');
-      inputs.forEach(element => {
-        if (element instanceof HTMLElement) {
-          const placeholder = element.getAttribute('placeholder');
-          if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
-            element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
-          }
-        }
+    
+    // Use multiple waitUntil conditions and a longer timeout
+    try {
+      // Use non-null assertion as ensureBrowserIsRunning guarantees it
+      await stagehand!.page.goto(url, { 
+        waitUntil: 'networkidle',
+        timeout: 60000 // 60 second timeout
       });
-    });
+      console.log("Navigation complete");
+    } catch (navError) {
+      console.warn(`Navigation warning (continuing): ${navError instanceof Error ? navError.message : 'Unknown error'}`);
+      
+      // Even if there was an error, we'll continue but wait a moment for any partial load
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
 
-    // Wait a bit to ensure any redirects have completed
-    await stagehand!.page.waitForLoadState('networkidle');
+    // Add a short delay to ensure page is stable
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    try {
+      // Ensure zoom level and placeholders are maintained after navigation
+      // Use non-null assertion here as well
+      await stagehand!.page.evaluate(() => {
+        try {
+          // Set zoom using transform scale
+          const style = document.createElement('style');
+          style.textContent = `
+            html {
+              transform: scale(0.75);
+              transform-origin: top left;
+              width: 133.33%;
+              height: 133.33%;
+              position: relative;
+            }
+            body {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              height: 100%;
+            }
+          `;
+          
+          // Remove any existing injected style to prevent duplicates
+          const existingStyle = document.head.querySelector('style[data-injected="true"]');
+          if (existingStyle) {
+            existingStyle.remove();
+          }
+          
+          // Mark our style as injected
+          style.setAttribute('data-injected', 'true');
+          document.head.appendChild(style);
+  
+          // Update placeholders
+          const inputs = document.querySelectorAll('input, textarea');
+          inputs.forEach(element => {
+            if (element instanceof HTMLElement) {
+              const placeholder = element.getAttribute('placeholder');
+              if (placeholder && !placeholder.endsWith(' (PLACEHOLDER)')) {
+                element.setAttribute('placeholder', `${placeholder} (PLACEHOLDER)`);
+              }
+            }
+          });
+        } catch (innerError) {
+          console.log("Error in page evaluation (handled internally)");
+        }
+      }).catch((err: Error) => {
+        console.warn("Page evaluate error (continuing):", err.message);
+      });
+    } catch (evalError) {
+      console.warn("Outer evaluation error (continuing):", evalError);
+    }
+
+    // Try to wait for network idle state, but don't fail if it times out
+    try {
+      await stagehand!.page.waitForLoadState('networkidle', { timeout: 5000 })
+        .catch((e: Error) => console.log("Wait for network idle timeout (continuing):", e.message));
+    } catch (loadError) {
+      console.log("Error waiting for page load (continuing):", loadError);
+    }
 
     return res.json({
       success: true,
@@ -439,21 +548,71 @@ app.get("/screenshot", async (req: Request, res: Response) => {
     // Ensure the browser is running using the reusable function
     await ensureBrowserIsRunning({ width: 1024, height: 500 });
 
+    // Make sure page is ready
+    try {
+      // Wait for page to be stable
+      await stagehand!.page.waitForLoadState('networkidle', { timeout: 5000 }).catch((err: Error) => {
+        console.warn("Screenshot waitForLoadState warning (continuing):", err.message);
+      });
+    } catch (loadError) {
+      console.warn("Error waiting for page load before screenshot (continuing):", loadError);
+    }
+
     // Get current URL and title (use non-null assertion)
-    const currentUrl = stagehand!.page.url();
-    const currentTitle = await stagehand!.page.title();
+    let currentUrl = "";
+    let currentTitle = "";
+    
+    try {
+      currentUrl = stagehand!.page.url();
+      currentTitle = await stagehand!.page.title();
+    } catch (infoError) {
+      console.warn("Error getting page info for screenshot (continuing):", infoError);
+    }
 
     // Capture only the current viewport
-    const screenshotBuffer = await stagehand!.page.screenshot({
-      fullPage: false,
-      scale: "css",
-      animations: "disabled",
-      caret: "hide",
-      timeout: 30000,
-    });
+    let screenshotBuffer;
+    try {
+      screenshotBuffer = await stagehand!.page.screenshot({
+        fullPage: false,
+        scale: "css",
+        animations: "disabled",
+        caret: "hide",
+        timeout: 30000,
+      });
+    } catch (screenshotError) {
+      console.error("Error taking screenshot:", screenshotError);
+      return res.status(500).json({
+        success: false,
+        error: screenshotError instanceof Error ? screenshotError.message : "Unknown screenshot error",
+      });
+    }
 
     // Convert buffer to base64 string
     const base64Image = screenshotBuffer.toString("base64");
+    
+    // Save screenshot to file in screenshots/ directory
+    try {
+      // Create screenshots directory if it doesn't exist
+      if (!fs.existsSync('screenshots')) {
+        fs.mkdirSync('screenshots', { recursive: true });
+      }
+      
+      // Create a timestamp and sanitized filename
+      const timestamp = new Date().toISOString().replace(/:/g, '-');
+      const sanitizedTitle = (currentTitle || 'screenshot')
+        .replace(/[^a-z0-9]/gi, '_')
+        .substring(0, 50); // Limit length
+      
+      const filename = `screenshots/${timestamp}_${sanitizedTitle}.png`;
+      
+      // Write the file asynchronously
+      fs.promises.writeFile(filename, screenshotBuffer)
+        .then(() => console.log(`Screenshot saved to ${filename}`))
+        .catch((saveError) => console.warn(`Error saving screenshot to file (non-fatal): ${saveError.message}`));
+    } catch (fileError) {
+      // Log error but continue - this should not affect the API response
+      console.warn(`Error preparing to save screenshot (non-fatal): ${fileError instanceof Error ? fileError.message : 'Unknown error'}`);
+    }
 
     res.json({
       success: true,
@@ -494,14 +653,27 @@ app.post("/act", async (req: Request, res: Response) => {
     // If a URL is provided, navigate first (use non-null assertion)
     if (url) {
       console.log("Navigating to:", url);
-      await stagehand!.page.goto(url);
+      await stagehand!.page.goto(url, { waitUntil: 'networkidle' }).catch((err: Error) => {
+        console.warn(`Navigation warning (continuing): ${err.message}`);
+      });
       console.log("Navigation complete");
+      
+      // Add a short delay to ensure the page is stable
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // Ensure the page is stable before proceeding
+    try {
+      await stagehand!.page.waitForLoadState('networkidle', { timeout: 10000 })
+        .catch((e: Error) => console.log("Wait for network idle timeout (continuing):", e.message));
+    } catch (loadError) {
+      console.log("Error waiting for page load (continuing):", loadError);
     }
 
     console.log("Creating agent...");
     // Determine provider based on available keys
-    const provider = process.env.OPENAI_API_KEY ? "openai" : "anthropic";
-    const apiKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
+    const provider = "anthropic";
+    const apiKey = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
     const model = provider === "openai" ? "computer-use-preview" : "claude-3-7-sonnet-20250219";
 
     // Use non-null assertion for stagehand
@@ -531,13 +703,61 @@ Here are some example pitfalls you might fall into and how to tackle them:
 
     console.log("Executing action:", action);
     const result = await agent.execute(action);
+    
+    // Variable to store screenshot URLs
+    let screenshotUrls: string[] = [];
+
+    // Upload any screenshots to BunnyCDN before returning
+    try {
+      // Check if screenshots directory exists
+      if (fs.existsSync('screenshots')) {
+        console.log("Uploading screenshots to BunnyCDN...");
+        
+        // Get all PNG files in the screenshots directory
+        const files = fs.readdirSync('screenshots').filter(file => file.toLowerCase().endsWith('.png'));
+        
+        if (files.length > 0) {
+          // Prepare promises for all uploads
+          const uploadPromises = files.map(async (file) => {
+            const localPath = path.join('screenshots', file);
+            // Create a path in BunnyCDN with timestamp and action hash to avoid collisions
+            const timestamp = new Date().toISOString().replace(/:/g, '-');
+            const actionHash = Buffer.from(action).toString('base64').substring(0, 8);
+            const remotePath = `screenshots/${timestamp}_${actionHash}_${file}`;
+            
+            return uploadToBunnyStorage(localPath, remotePath);
+          });
+          
+          // Wait for all uploads to complete
+          const uploadResults = await Promise.all(uploadPromises);
+          console.log(`Uploaded ${uploadResults.length} screenshots to BunnyCDN`);
+          
+          // Store URLs in the separate variable
+          screenshotUrls = uploadResults.map(r => r.url).filter(Boolean);
+        } else {
+          console.log("No PNG files found in screenshots directory");
+        }
+        
+        // Remove the screenshots directory after uploading
+        try {
+          fs.rmSync('screenshots', { recursive: true, force: true });
+          console.log("Screenshots directory removed");
+        } catch (rmError) {
+          console.warn("Error removing screenshots directory:", rmError);
+        }
+      }
+    } catch (uploadError) {
+      console.error("Error handling screenshots:", uploadError);
+      // Continue with the response even if screenshot handling fails
+    }
 
     return res.json({ 
       success: true, 
       message: "Action executed successfully",
       completed: result.completed,
       actions: result.actions,
-      metadata: result.metadata
+      metadata: result.metadata,
+      screenshots: screenshotUrls
     });
   } catch (error: unknown) {
     console.error("Error in act endpoint:", error);
