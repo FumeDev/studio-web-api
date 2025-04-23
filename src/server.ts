@@ -686,7 +686,7 @@ app.post("/act", async (req: Request, res: Response) => {
 
     console.log("Creating agent...");
     // Determine provider based on available keys
-    const provider = "anthropic";
+    const provider = "openai";
     const apiKey = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
     const model = provider === "openai" ? "computer-use-preview" : "claude-3-7-sonnet-20250219";
 
