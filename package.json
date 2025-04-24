@@ -4,7 +4,7 @@
   "scripts": {
     "build": "tsc",
     "start": "./start.sh",
-    "dev": "nodemon --exec 'tsx' src/server.ts",
+    "dev": "nodemon --ignore 'repeatables/**' --ignore 'screenshots/**' --exec 'tsx' src/server.ts",
     "debug": "NODE_OPTIONS='--inspect-brk' tsx --inspect src/server.ts",
     "postinstall": "playwright install",
     "cli": "tsx src/cli.ts",

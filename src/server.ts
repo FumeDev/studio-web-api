@@ -765,13 +765,69 @@ Here are some example pitfalls you might fall into and how to tackle them:
       // Continue with the response even if screenshot handling fails
     }
 
+    // Check for repeatables folder and get latest JSON file
+    let repeatables = null;
+    try {
+      if (fs.existsSync('repeatables')) {
+        console.log("Checking repeatables directory for JSON files...");
+        
+        // Get all JSON files in the repeatables directory
+        const jsonFiles = fs.readdirSync('repeatables')
+          .filter(file => file.toLowerCase().endsWith('.json'))
+          .map(file => ({
+            name: file,
+            path: path.join('repeatables', file),
+            mtime: fs.statSync(path.join('repeatables', file)).mtime
+          }))
+          .sort((a, b) => b.mtime.getTime() - a.mtime.getTime()); // Sort by modification time, newest first
+        
+        if (jsonFiles.length > 0) {
+          // Get the latest JSON file
+          const latestFile = jsonFiles[0];
+          console.log(`Found latest JSON file: ${latestFile.name}`);
+          
+          // Read the file contents
+          const fileContents = fs.readFileSync(latestFile.path, 'utf-8');
+          try {
+            // Parse the JSON
+            repeatables = JSON.parse(fileContents);
+            console.log("Successfully parsed JSON from repeatables file");
+            
+            // Delete the file after parsing
+            fs.unlinkSync(latestFile.path);
+            console.log(`Deleted the processed repeatables file: ${latestFile.name}`);
+          } catch (parseError) {
+            console.error("Error parsing JSON from repeatables file:", parseError);
+            // Return the raw file contents if parsing fails
+            repeatables = { raw: fileContents };
+            
+            // Delete the file even if parsing fails
+            try {
+              fs.unlinkSync(latestFile.path);
+              console.log(`Deleted the unparsable repeatables file: ${latestFile.name}`);
+            } catch (deleteError) {
+              console.error("Error deleting unparsable repeatables file:", deleteError);
+            }
+          }
+        } else {
+          console.log("No JSON files found in repeatables directory");
+        }
+      } else {
+        console.log("Repeatables directory does not exist");
+      }
+    } catch (repeatableError) {
+      console.error("Error checking repeatables:", repeatableError);
+      // Continue with the response even if repeatables handling fails
+    }
+
     return res.json({ 
       success: true, 
       message: "Action executed successfully",
       completed: result.completed,
       actions: result.actions,
       metadata: result.metadata,
-      screenshots: screenshotUrls
+      screenshots: screenshotUrls,
+      repeatables: repeatables
     });
   } catch (error: unknown) {
     console.error("Error in act endpoint:", error);
