@@ -22,7 +22,7 @@ const BUNNY_REGION = process.env.BUNNY_REGION || 'la';
 const BUNNY_API_KEY = process.env.BUNNY_API_KEY || '47be9f34-1258-4d6b-8c3f9a2965c3-4730-4e3f';
 const BUNNY_STORAGE_URL = `https://${BUNNY_REGION}.storage.bunnycdn.com/${BUNNY_STORAGE_ZONE}/`;
 
-const DEFAULT_VIEWPORT_SIZE = { width: 1890, height: 1024 };
+const DEFAULT_VIEWPORT_SIZE = { width: 1500, height: 800 };
 const LARGE_VIEWPORT_SIZE = { width: 1890, height: 1024 };
 
 /**
@@ -183,35 +183,6 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
       // Add initialization script to maintain zoom level and modify placeholders
       await stagehand.page.addInitScript(() => {
         const setupPage = () => {
-          // Set zoom using transform scale instead of zoom property
-          const style = document.createElement('style');
-          style.textContent = `
-            html {
-              transform: scale(0.75);
-              transform-origin: top left;
-              width: 133.33%;
-              height: 133.33%;
-              position: relative;
-            }
-            body {
-              position: absolute;
-              left: 0;
-              top: 0;
-              width: 100%;
-              height: 100%;
-            }
-          `;
-          
-          // Remove any existing injected style to prevent duplicates
-          const existingStyle = document.head.querySelector('style[data-injected="true"]');
-          if (existingStyle) {
-            existingStyle.remove();
-          }
-          
-          // Mark our style as injected
-          style.setAttribute('data-injected', 'true');
-          document.head.appendChild(style);
-
           // Function to update placeholders
           const updatePlaceholders = () => {
             const inputs = document.querySelectorAll('input, textarea');
@@ -263,35 +234,6 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
           if (!stagehand?.page) return;
           
           await stagehand.page.evaluate(() => {
-            // Set zoom using transform scale
-            const style = document.createElement('style');
-            style.textContent = `
-              html {
-                transform: scale(0.75);
-                transform-origin: top left;
-                width: 133.33%;
-                height: 133.33%;
-                position: relative;
-              }
-              body {
-                position: absolute;
-                left: 0;
-                top: 0;
-                width: 100%;
-                height: 100%;
-              }
-            `;
-            
-            // Remove any existing injected style to prevent duplicates
-            const existingStyle = document.head.querySelector('style[data-injected="true"]');
-            if (existingStyle) {
-              existingStyle.remove();
-            }
-            
-            // Mark our style as injected
-            style.setAttribute('data-injected', 'true');
-            document.head.appendChild(style);
-
             // Update placeholders
             const inputs = document.querySelectorAll('input, textarea');
             inputs.forEach(element => {
@@ -460,35 +402,6 @@ app.post("/goto", async (req: Request, res: Response) => {
       // Use non-null assertion here as well
       await stagehand!.page.evaluate(() => {
         try {
-          // Set zoom using transform scale
-          const style = document.createElement('style');
-          style.textContent = `
-            html {
-              transform: scale(0.75);
-              transform-origin: top left;
-              width: 133.33%;
-              height: 133.33%;
-              position: relative;
-            }
-            body {
-              position: absolute;
-              left: 0;
-              top: 0;
-              width: 100%;
-              height: 100%;
-            }
-          `;
-          
-          // Remove any existing injected style to prevent duplicates
-          const existingStyle = document.head.querySelector('style[data-injected="true"]');
-          if (existingStyle) {
-            existingStyle.remove();
-          }
-          
-          // Mark our style as injected
-          style.setAttribute('data-injected', 'true');
-          document.head.appendChild(style);
-  
           // Update placeholders
           const inputs = document.querySelectorAll('input, textarea');
           inputs.forEach(element => {
