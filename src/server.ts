@@ -13,6 +13,8 @@ import { ProcessManager } from './executeCommand.js';
 import axios from 'axios';
 import { createReadStream } from 'fs';
 import { Readable } from 'stream';
+import * as http from 'http';
+import * as https from 'https';
 
 dotenv.config();
 
@@ -44,7 +46,7 @@ async function uploadToBunnyStorage(localFilePath: string, remoteFilePath: strin
     // Full URL for the file in BunnyCDN
     const uploadUrl = `${BUNNY_STORAGE_URL}${remoteFilePath}`;
     
-    // Upload the file
+    // Upload the file with explicit proxy configuration to avoid environment variables
     await axios.put(uploadUrl, fileStream, {
       headers: {
         'AccessKey': BUNNY_API_KEY,
@@ -52,6 +54,8 @@ async function uploadToBunnyStorage(localFilePath: string, remoteFilePath: strin
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,
+      // Explicitly disable proxy to avoid SOCKS5 protocol mismatch errors
+      proxy: false
     });
 
     // Return success with the CDN URL
@@ -61,6 +65,52 @@ async function uploadToBunnyStorage(localFilePath: string, remoteFilePath: strin
     };
   } catch (error) {
     console.error('BunnyCDN upload error:', error);
+    
+    // Check for the specific SOCKS5 protocol mismatch error
+    if (error instanceof Error && 
+        (error.message.includes('protocol mismatch') || 
+         error.message.includes('socks5:'))) {
+      console.warn('Detected proxy configuration issue. Trying again with explicit HTTP agent...');
+      
+      try {
+        // Create new HTTP and HTTPS agents
+        const httpAgent = new http.Agent({ keepAlive: true });
+        const httpsAgent = new https.Agent({ keepAlive: true });
+        
+        // Retry with explicit HTTP agent configuration
+        await axios.put(
+          `${BUNNY_STORAGE_URL}${remoteFilePath}`, 
+          createReadStream(localFilePath), 
+          {
+            headers: {
+              'AccessKey': BUNNY_API_KEY,
+              'Content-Type': 'application/octet-stream',
+            },
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+            proxy: false,
+            httpAgent, // Use explicit HTTP agent
+            httpsAgent // Use explicit HTTPS agent
+          }
+        );
+        
+        // If successful, return the URL
+        return {
+          success: true,
+          url: `https://${BUNNY_STORAGE_ZONE}.b-cdn.net/${remoteFilePath}`
+        };
+      } catch (retryError) {
+        console.error('Retry with explicit agent also failed:', retryError);
+        return {
+          success: false,
+          url: '',
+          error: retryError instanceof Error ? 
+            `Protocol error retry failed: ${retryError.message}` : 
+            'Unknown error during retry'
+        };
+      }
+    }
+    
     return {
       success: false,
       url: '',
@@ -646,26 +696,60 @@ Here are some example pitfalls you might fall into and how to tackle them:
         if (files.length > 0) {
           // Prepare promises for all uploads
           const uploadPromises = files.map(async (file) => {
-            const localPath = path.join('screenshots', file);
-            // Create a path in BunnyCDN with timestamp and action hash to avoid collisions
-            const timestamp = new Date().toISOString().replace(/:/g, '-');
-            const actionHash = Buffer.from(action).toString('base64').substring(0, 8);
-            const remotePath = `screenshots/${timestamp}_${actionHash}_${file}`;
-            
-            return uploadToBunnyStorage(localPath, remotePath);
+            try {
+              const localPath = path.join('screenshots', file);
+              // Verify the file still exists before attempting upload
+              if (!fs.existsSync(localPath)) {
+                console.warn(`File ${localPath} no longer exists, skipping upload`);
+                return { success: false, url: '', error: 'File not found' };
+              }
+              
+              // Create a path in BunnyCDN with timestamp and action hash to avoid collisions
+              const timestamp = new Date().toISOString().replace(/:/g, '-');
+              const actionHash = Buffer.from(action).toString('base64').substring(0, 8);
+              const remotePath = `screenshots/${timestamp}_${actionHash}_${file}`;
+              
+              return uploadToBunnyStorage(localPath, remotePath);
+            } catch (fileError) {
+              console.error(`Error preparing file ${file} for upload:`, fileError);
+              return { success: false, url: '', error: fileError instanceof Error ? fileError.message : 'Unknown file error' };
+            }
           });
           
-          // Wait for all uploads to complete
-          const uploadResults = await Promise.all(uploadPromises);
-          console.log(`Uploaded ${uploadResults.length} screenshots to BunnyCDN`);
+          // Use Promise.allSettled instead of Promise.all to handle failures gracefully
+          const uploadResults = await Promise.allSettled(uploadPromises);
+          console.log(`Processed ${uploadResults.length} screenshot uploads`);
           
-          // Store URLs in the separate variable
-          screenshotUrls = uploadResults.map(r => r.url).filter(Boolean);
+          // Store successful URLs in the separate variable
+          screenshotUrls = uploadResults
+            .filter((result): result is PromiseFulfilledResult<{success: boolean, url: string, error?: string}> => 
+              result.status === 'fulfilled' && result.value.success)
+            .map(result => result.value.url);
+            
+          console.log(`Successfully uploaded ${screenshotUrls.length} screenshots to BunnyCDN`);
+          
+          // Log any failed uploads
+          const failedUploads = uploadResults
+            .filter(result => result.status === 'rejected' || (result.status === 'fulfilled' && !result.value.success))
+            .map(result => {
+              if (result.status === 'rejected') {
+                return result.reason instanceof Error ? result.reason.message : 'Unknown error';
+              } else {
+                return (result as PromiseFulfilledResult<{success: boolean, url: string, error?: string}>).value.error || 'Unknown error';
+              }
+            });
+            
+          if (failedUploads.length > 0) {
+            console.warn(`${failedUploads.length} uploads failed with errors:`, failedUploads);
+          }
+          
+          // Wait a short time to ensure all file operations are complete before cleanup
+          await new Promise(resolve => setTimeout(resolve, 500));
         } else {
           console.log("No PNG files found in screenshots directory");
         }
         
-        // Remove the screenshots directory after uploading
+        // Remove the screenshots directory after all operations are complete
         try {
           fs.rmSync('screenshots', { recursive: true, force: true });
           console.log("Screenshots directory removed");
