@@ -580,7 +580,7 @@ app.get("/screenshot", async (req: Request, res: Response) => {
         .replace(/[^a-z0-9]/gi, '_')
         .substring(0, 50); // Limit length
       
-      const filename = `screenshots/${timestamp}_${sanitizedTitle}.png`;
+      const filename = `screenshots/${Math.random().toString(36).substring(2, 15)}.png`;
       
       // Write the file asynchronously
       fs.promises.writeFile(filename, screenshotBuffer)

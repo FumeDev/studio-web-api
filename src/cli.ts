@@ -207,7 +207,7 @@ async function processCommand(input: string) {
         
       case COMMANDS.SCREENSHOT:
         console.log(chalk.blue('Taking screenshot...'));
-        const screenshotPath = `./screenshots/screenshot-${Date.now()}.png`;
+        const screenshotPath = `./screenshots/screenshot-${Math.random().toString(36).substring(2, 15)}.png`;
         await stagehand.page.screenshot({ path: screenshotPath });
         console.log(chalk.green(`Screenshot saved to ${screenshotPath}`));
         break;
