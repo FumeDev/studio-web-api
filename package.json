@@ -23,6 +23,7 @@
     "browser-use": "^0.0.1",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
+    "css-selector-generator": "^3.6.9",
     "dockerode": "^3.3.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
