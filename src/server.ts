@@ -682,86 +682,56 @@ Here are some example pitfalls you might fall into and how to tackle them:
     console.log("Executing action:", action);
     const result = await agent.execute(action);
     
-    // Variable to store screenshot URLs
-    let screenshotUrls: string[] = [];
-
-    // Upload any screenshots to BunnyCDN before returning
+    // Map timestamped screenshot directories to actions
+    const actionScreenshotMap: Record<string, {before: string, after: string}> = {};
     try {
-      // Check if screenshots directory exists
-      if (fs.existsSync('screenshots')) {
-        console.log("Uploading screenshots to BunnyCDN...");
-        
-        // Get all PNG files in the screenshots directory
-        const files = fs.readdirSync('screenshots').filter(file => file.toLowerCase().endsWith('.png'));
-        
-        if (files.length > 0) {
-          // Prepare promises for all uploads
-          const uploadPromises = files.map(async (file) => {
-            try {
-              const localPath = path.join('screenshots', file);
-              // Verify the file still exists before attempting upload
-              if (!fs.existsSync(localPath)) {
-                console.warn(`File ${localPath} no longer exists, skipping upload`);
-                return { success: false, url: '', error: 'File not found' };
-              }
-              
-              // Create a path in BunnyCDN with timestamp and action hash to avoid collisions
-              const timestamp = new Date().toISOString().replace(/:/g, '-');
-              const actionHash = Buffer.from(action).toString('base64').substring(0, 8);
-              const remotePath = `screenshots/${timestamp}_${actionHash}_${file}`;
-              
-              return uploadToBunnyStorage(localPath, remotePath);
-            } catch (fileError) {
-              console.error(`Error preparing file ${file} for upload:`, fileError);
-              return { success: false, url: '', error: fileError instanceof Error ? fileError.message : 'Unknown file error' };
+      const screenshotsPath = 'screenshots';
+      if (fs.existsSync(screenshotsPath)) {
+        // List directories (timestamped per action)
+        const dirs = fs.readdirSync(screenshotsPath)
+          .filter(name => fs.statSync(path.join(screenshotsPath, name)).isDirectory())
+          .sort();
+        for (const dir of dirs) {
+          const beforeLocal = path.join(screenshotsPath, dir, 'before.png');
+          const afterLocal = path.join(screenshotsPath, dir, 'after.png');
+          let beforeUrl = '';
+          let afterUrl = '';
+          try {
+            if (fs.existsSync(beforeLocal)) {
+              const res = await uploadToBunnyStorage(beforeLocal, `screenshots/${dir}/before.png`);
+              beforeUrl = res.success ? res.url : '';
             }
-          });
-          
-          // Use Promise.allSettled instead of Promise.all to handle failures gracefully
-          const uploadResults = await Promise.allSettled(uploadPromises);
-          console.log(`Processed ${uploadResults.length} screenshot uploads`);
-          
-          // Store successful URLs in the separate variable
-          screenshotUrls = uploadResults
-            .filter((result): result is PromiseFulfilledResult<{success: boolean, url: string, error?: string}> => 
-              result.status === 'fulfilled' && result.value.success)
-            .map(result => result.value.url);
-            
-          console.log(`Successfully uploaded ${screenshotUrls.length} screenshots to BunnyCDN`);
-          
-          // Log any failed uploads
-          const failedUploads = uploadResults
-            .filter(result => result.status === 'rejected' || (result.status === 'fulfilled' && !result.value.success))
-            .map(result => {
-              if (result.status === 'rejected') {
-                return result.reason instanceof Error ? result.reason.message : 'Unknown error';
-              } else {
-                return (result as PromiseFulfilledResult<{success: boolean, url: string, error?: string}>).value.error || 'Unknown error';
-              }
-            });
-            
-          if (failedUploads.length > 0) {
-            console.warn(`${failedUploads.length} uploads failed with errors:`, failedUploads);
+          } catch (err) {
+            console.warn(`Error uploading before screenshot for ${dir}:`, err);
           }
-          
-          // Wait a short time to ensure all file operations are complete before cleanup
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } else {
-          console.log("No PNG files found in screenshots directory");
+          try {
+            if (fs.existsSync(afterLocal)) {
+              const res = await uploadToBunnyStorage(afterLocal, `screenshots/${dir}/after.png`);
+              afterUrl = res.success ? res.url : '';
+            }
+          } catch (err) {
+            console.warn(`Error uploading after screenshot for ${dir}:`, err);
+          }
+          actionScreenshotMap[dir] = { before: beforeUrl, after: afterUrl };
         }
-        
-        // Remove the screenshots directory after all operations are complete
+        // Clean up local screenshots folder
         try {
-          fs.rmSync('screenshots', { recursive: true, force: true });
+          fs.rmSync(screenshotsPath, { recursive: true, force: true });
           console.log("Screenshots directory removed");
-        } catch (rmError) {
-          console.warn("Error removing screenshots directory:", rmError);
+        } catch (rmErr) {
+          console.warn("Error removing screenshots directory:", rmErr);
         }
       }
-    } catch (uploadError) {
-      console.error("Error handling screenshots:", uploadError);
-      // Continue with the response even if screenshot handling fails
+    } catch (err) {
+      console.error("Error handling action screenshots:", err);
     }
+
+    // Attach screenshots to each action based on timestamp order
+    const orderedDirs = Object.keys(actionScreenshotMap);
+    result.actions.forEach((act, idx) => {
+      const dir = orderedDirs[idx];
+      if (dir) act.screenshots = actionScreenshotMap[dir];
+    });
 
     // Check for repeatables folder and get latest JSON file
     let repeatables = null;
@@ -824,7 +794,6 @@ Here are some example pitfalls you might fall into and how to tackle them:
       completed: result.completed,
       actions: result.actions,
       metadata: result.metadata,
-      screenshots: screenshotUrls,
       repeatables: repeatables
     });
   } catch (error: unknown) {
