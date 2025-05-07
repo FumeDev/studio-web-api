@@ -668,6 +668,7 @@ You first hover over the components you want to scroll in.
 You are smart enough to hover over the navbars to expand them to see the option names when needed.
 
 Here are some example pitfalls you might fall into and how to tackle them:
+- Not seeing the element the user user wants you to interact with -> Try hovering over navbars to expand them to see the option names or play around the app to expand sections to find the element.
 - Popups, modals, nav bars etc. blocking the important content on the page -> Dismiss the obstacle by clicking on an "X" or "Close" button. Or, if there is no button, click on the empty area outside of the obstacle.
 - Scrolling **inside** a sub-component instead of the entire page -> First move the mouse to the center of the element you want to scroll in - hovering over it. Then, scroll how many pixels you need to scroll in the direction you want to scroll in.
 - Not being able to find a component the task is referring to -> Scroll down the page to see if it's below the current view, or make speculative guess by looking at the icons and navigating around the app to find it.
