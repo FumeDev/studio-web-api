@@ -342,10 +342,34 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
 
       // Successfully initialized
       return;
-
     } catch (error) {
       lastError = error;
       console.error(`Attempt ${attempt + 1} failed:`, error);
+
+      // Handle specific proxy error gracefully
+      if (
+        error instanceof Error &&
+        error.message &&
+        error.message.includes("Cannot create proxy with a non-object as target or handler")
+      ) {
+        console.error(
+          "Critical Stagehand initialization error: Cannot create proxy with a non-object as target or handler. This usually indicates a configuration or library bug. Aborting further attempts."
+        );
+        // Clean up failed instance
+        if (stagehand) {
+          try {
+            await stagehand.close();
+          } catch (closeError) {
+            console.error("Error closing stagehand:", closeError);
+          }
+          stagehand = null;
+        }
+        currentConfig = null;
+        // Throw a user-friendly error (regular Error)
+        throw new Error(
+          "Failed to initialize browser: Internal configuration or library error (Cannot create proxy with a non-object as target or handler). Please check your Stagehand configuration and library version."
+        );
+      }
 
       // Clean up failed instance
       if (stagehand) {
