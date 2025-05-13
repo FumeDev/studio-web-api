@@ -543,6 +543,31 @@ app.post("/go_back", async (req: Request, res: Response) => {
   }
 });
 
+// ---- 2.6. "Refresh" Endpoint ----
+app.post("/refresh", async (req: Request, res: Response) => {
+  try {
+    // Ensure the browser is running using the reusable function
+    await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
+
+    console.log("Refreshing current page...");
+    // Use non-null assertion
+    await stagehand!.page.reload({ waitUntil: 'networkidle', timeout: 60000 });
+    console.log("Page refresh complete");
+
+    return res.json({
+      success: true,
+      message: "Page refreshed",
+    });
+  } catch (error: unknown) {
+    console.error("Error in refresh endpoint:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error during refresh",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
 // ---- 3. Screenshot Endpoint ----
 app.get("/screenshot", async (req: Request, res: Response) => {
   try {
