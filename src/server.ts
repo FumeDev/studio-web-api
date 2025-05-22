@@ -671,7 +671,7 @@ app.post("/act", async (req: Request, res: Response) => {
       );
     }
 
-    const { action, url } = req.body;
+    const { action, url, selector, action_type } = req.body;
     if (!action) {
       throw new Error("Action description is required");
     }
@@ -696,6 +696,74 @@ app.post("/act", async (req: Request, res: Response) => {
       console.log("Error waiting for page load (continuing):", loadError);
     }
 
+    // Check if we can use deterministic action execution
+    let usedDeterministicAction = false;
+    let deterministicResult = null;
+    let deterministicError = null;
+
+    if (selector && action_type) {
+      try {
+        console.log(`Attempting deterministic action: ${action_type} on selector "${selector}"`);
+        
+        // Perform the action based on action_type
+        switch (action_type.toLowerCase()) {
+          case 'click':
+            // Wait for the selector to be available (with timeout)
+            await stagehand!.page.waitForSelector(selector, { timeout: 5000 });
+            // Click the element
+            await stagehand!.page.click(selector);
+            console.log(`Successfully clicked on selector: ${selector}`);
+            break;
+            
+          case 'type':
+            // Wait for the selector to be available (with timeout)
+            await stagehand!.page.waitForSelector(selector, { timeout: 5000 });
+            // Clear existing content and type the new text
+            await stagehand!.page.fill(selector, action);
+            console.log(`Successfully typed "${action}" into selector: ${selector}`);
+            break;
+            
+          default:
+            // For unsupported action types, throw an error to fall back to AI
+            throw new Error(`Unsupported action_type: ${action_type}`);
+        }
+        
+        // Create a simplified result similar to the agent result
+        deterministicResult = {
+          completed: true,
+          actions: [{
+            type: action_type.toLowerCase(),
+            element: selector,
+            value: action_type.toLowerCase() === 'type' ? action : undefined,
+            // No screenshots for deterministic execution
+            screenshots: {}
+          }],
+          metadata: {
+            deterministic: true,
+            action_type: action_type.toLowerCase(),
+            selector: selector
+          }
+        };
+        
+        usedDeterministicAction = true;
+        console.log("Deterministic action executed successfully");
+      } catch (detError) {
+        // Log the error but fall back to AI agent
+        deterministicError = detError;
+        console.log(`Deterministic action failed: ${detError instanceof Error ? detError.message : 'Unknown error'}`);
+        console.log("Falling back to AI agent execution...");
+      }
+    }
+    
+    // If deterministic action was successful, return the result
+    if (usedDeterministicAction && deterministicResult) {
+      return res.json({
+        success: true,
+        message: "Action executed successfully using deterministic method",
+      });
+    }
+
+    // Fall back to AI agent if deterministic method was not used or failed
     console.log("Creating agent...");
     // Determine provider based on available keys
     const provider = "openai";
@@ -729,7 +797,7 @@ Here are some example pitfalls you might fall into and how to tackle them:
       }
     });
 
-    console.log("Executing action:", action);
+    console.log("Executing action with AI agent:", action);
     const result = await agent.execute(action);
     
     // Map timestamped screenshot directories to actions
@@ -836,6 +904,15 @@ Here are some example pitfalls you might fall into and how to tackle them:
     } catch (repeatableError) {
       console.error("Error checking repeatables:", repeatableError);
       // Continue with the response even if repeatables handling fails
+    }
+
+    // Add metadata about fallback reason if deterministic was attempted
+    if (selector && action_type && deterministicError) {
+      if (!result.metadata) result.metadata = {};
+      result.metadata.deterministic_fallback = true;
+      result.metadata.deterministic_error = deterministicError instanceof Error 
+        ? deterministicError.message 
+        : 'Unknown error';
     }
 
     return res.json({ 

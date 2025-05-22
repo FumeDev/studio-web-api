@@ -13,6 +13,10 @@ const StagehandConfig: ConstructorParams = {
       width: 1200,
       height: 600,
     },
+    args: [
+      "--remote-debugging-port=9222",
+      "--remote-debugging-address=0.0.0.0"
+    ]
   },
   apiKey: process.env.BROWSERBASE_API_KEY /* API key for authentication */,
   projectId: process.env.BROWSERBASE_PROJECT_ID /* Project identifier */,
