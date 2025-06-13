@@ -568,6 +568,71 @@ app.post("/refresh", async (req: Request, res: Response) => {
   }
 });
 
+// ---- 2.7. "Inject Cookie" Endpoint ----
+app.post("/inject-cookie", async (req: Request, res: Response) => {
+  try {
+    // Ensure the browser is running using the reusable function
+    await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
+
+    const { name, value, domain, path, expires, httpOnly, secure, sameSite } = req.body;
+
+    // Validate required parameters
+    if (!name || !value) {
+      return res.status(400).json({
+        success: false,
+        error: "Cookie name and value are required",
+      });
+    }
+
+    console.log(`Injecting cookie: ${name}=${value}`);
+
+    // Prepare cookie object
+    const cookie: any = {
+      name,
+      value,
+      domain: domain || undefined,
+      path: path || "/",
+      expires: expires ? new Date(expires).getTime() / 1000 : undefined,
+      httpOnly: httpOnly || false,
+      secure: secure || false,
+      sameSite: sameSite || "Lax"
+    };
+
+    // Remove undefined properties to avoid issues
+    Object.keys(cookie).forEach(key => {
+      if (cookie[key] === undefined) {
+        delete cookie[key];
+      }
+    });
+
+    // Inject the cookie using the browser context
+    await stagehand!.page.context().addCookies([cookie]);
+    console.log("Cookie injected successfully");
+
+    return res.json({
+      success: true,
+      message: `Cookie '${name}' injected successfully`,
+      cookie: {
+        name,
+        value,
+        domain: cookie.domain,
+        path: cookie.path,
+        expires: cookie.expires,
+        httpOnly: cookie.httpOnly,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite
+      }
+    });
+  } catch (error: unknown) {
+    console.error("Error in inject-cookie endpoint:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error during cookie injection",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
 // ---- 3. Screenshot Endpoint ----
 app.get("/screenshot", async (req: Request, res: Response) => {
   try {
