@@ -831,9 +831,9 @@ app.post("/act", async (req: Request, res: Response) => {
     // Fall back to AI agent if deterministic method was not used or failed
     console.log("Creating agent...");
     // Determine provider based on available keys
-    const provider = "openai";
+    const provider = "anthropic";
     const apiKey = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
-    const model = provider === "openai" ? "computer-use-preview" : "claude-3-7-sonnet-20250219";
+    const model = provider === "openai" ? "computer-use-preview" : "claude-sonnet-4-20250514";
 
     // Use non-null assertion for stagehand
     const agent = stagehand!.agent({
