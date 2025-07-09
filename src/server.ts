@@ -1890,6 +1890,7 @@ app.post("/upload-file", async (req: Request, res: Response) => {
 
     const {
       file_input_selector,
+      file_input_description,
       file_base64,
       file_path,
       file_name = "upload_file",
@@ -1909,21 +1910,35 @@ app.post("/upload-file", async (req: Request, res: Response) => {
 
     if (!inputSelector) {
       try {
-        console.log("Attempting to discover file input selector using observe()...");
-        const observations: any[] = await stagehand!.page.observe({
-          instruction: "Find the file upload input or button on this page"
-        });
+        const instruction = file_input_description
+          ? `Find the file input described as: ${file_input_description}`
+          : "Find the file upload input or button on this page";
 
-        const candidate = observations.find((obs) => {
-          const combined = `${obs.description || ''} ${obs.selector || ''}`.toLowerCase();
-          return combined.includes('file') || combined.includes('upload');
-        });
+        console.log(`Attempting to discover file input selector using observe() with instruction: "${instruction}"`);
+        
+        const observations: any[] = await stagehand!.page.observe({ instruction });
+
+        let candidate;
+        if (file_input_description) {
+          // If a description is provided, trust the first result from observe()
+          candidate = observations[0];
+          if (candidate) {
+            console.log(`Using first observation based on description: "${candidate.description}"`);
+          }
+        } else {
+          // Otherwise, find a candidate that looks like a file upload
+          candidate = observations.find((obs) => {
+            const combined = `${obs.description || ''} ${obs.selector || ''}`.toLowerCase();
+            return combined.includes('file') || combined.includes('upload');
+          });
+        }
 
         if (candidate?.selector) {
           inputSelector = candidate.selector;
           console.log(`Discovered selector via observe(): ${inputSelector}`);
         } else {
           // Fallback: query DOM directly for common file inputs
+          console.log("observe() did not return a suitable selector, falling back to direct DOM query.");
           const handle = await stagehand!.page.$('input[type="file"]');
           if (handle) {
             inputSelector = await handle.evaluate((el: HTMLElement) => {
