@@ -122,7 +122,8 @@ async function uploadToBunnyStorage(localFilePath: string, remoteFilePath: strin
 const execAsync = promisify(exec);
 
 const app = express();
-app.use(express.json());
+// Increase JSON payload limit to accommodate base64 encoded files
+app.use(express.json({ limit: '50mb' }));
 
 // We keep a single global Stagehand reference and a config
 let stagehand: Stagehand | null = null;
@@ -1876,6 +1877,148 @@ app.get("/list-processes", async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- 3.5. File Upload Endpoint ----
+app.post("/upload-file", async (req: Request, res: Response) => {
+  try {
+    // Ensure the browser is running
+    await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
+
+    const {
+      file_input_selector,
+      file_base64,
+      file_path,
+      file_name = "upload_file",
+      post_upload_selector,
+      post_upload_wait_ms = 10000
+    } = req.body || {};
+
+    if (!file_base64 && !file_path) {
+      return res.status(400).json({
+        success: false,
+        error: "Either file_base64 or file_path parameter must be provided"
+      });
+    }
+
+    // Determine the selector to use
+    let inputSelector: string | undefined = file_input_selector;
+
+    if (!inputSelector) {
+      try {
+        console.log("Attempting to discover file input selector using observe()...");
+        const observations: any[] = await stagehand!.page.observe({
+          instruction: "Find the file upload input or button on this page"
+        });
+
+        const candidate = observations.find((obs) => {
+          const combined = `${obs.description || ''} ${obs.selector || ''}`.toLowerCase();
+          return combined.includes('file') || combined.includes('upload');
+        });
+
+        if (candidate?.selector) {
+          inputSelector = candidate.selector;
+          console.log(`Discovered selector via observe(): ${inputSelector}`);
+        } else {
+          // Fallback: query DOM directly for common file inputs
+          const handle = await stagehand!.page.$('input[type="file"]');
+          if (handle) {
+            inputSelector = await handle.evaluate((el: HTMLElement) => {
+              if (el.id) return `#${el.id}`;
+              if (el.getAttribute('name')) return `input[name="${el.getAttribute('name')}"]`;
+              return 'input[type="file"]';
+            });
+            console.log(`Discovered selector via DOM query: ${inputSelector}`);
+          }
+        }
+      } catch (obsErr) {
+        console.warn("Automatic selector discovery failed:", obsErr);
+      }
+    }
+
+    if (!inputSelector) {
+      return res.status(404).json({
+        success: false,
+        error: "Unable to locate file input element automatically. Please provide file_input_selector."
+      });
+    }
+
+    // Prepare local file path
+    let localFilePath = "";
+    let tempFileCreated = false;
+    try {
+      if (file_path) {
+        if (!fs.existsSync(file_path)) {
+          throw new Error(`File not found at path: ${file_path}`);
+        }
+        localFilePath = file_path;
+      } else {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "upload_"));
+        localFilePath = path.join(tempDir, file_name);
+        const buffer = Buffer.from(file_base64, "base64");
+        fs.writeFileSync(localFilePath, buffer);
+        tempFileCreated = true;
+        console.log(`Temporary file created at ${localFilePath}`);
+      }
+    } catch (prepError) {
+      console.error("Error preparing file for upload:", prepError);
+      return res.status(500).json({
+        success: false,
+        error: prepError instanceof Error ? prepError.message : "Error preparing file for upload"
+      });
+    }
+
+    try {
+      await stagehand!.page.waitForSelector(inputSelector, { timeout: 10000 });
+      await stagehand!.page.setInputFiles(inputSelector, localFilePath);
+      console.log(`File set on input ${inputSelector}`);
+
+      if (post_upload_selector) {
+        try {
+          await stagehand!.page.waitForSelector(post_upload_selector, { timeout: 5000 });
+          await stagehand!.page.click(post_upload_selector);
+          console.log(`Clicked post-upload selector ${post_upload_selector}`);
+        } catch (postClickErr) {
+          console.warn(`Post-upload click error (continuing): ${postClickErr instanceof Error ? postClickErr.message : postClickErr}`);
+        }
+      }
+
+      if (post_upload_wait_ms && post_upload_wait_ms > 0) {
+        try {
+          await stagehand!.page.waitForLoadState('networkidle', { timeout: post_upload_wait_ms }).catch(() => {});
+        } catch (waitErr) {
+          console.warn("Post-upload wait error (continuing):", waitErr);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "File upload action completed successfully"
+      });
+    } catch (uploadError) {
+      console.error("File upload error:", uploadError);
+      return res.status(500).json({
+        success: false,
+        error: uploadError instanceof Error ? uploadError.message : "Unknown error during file upload"
+      });
+    } finally {
+      if (tempFileCreated) {
+        try {
+          fs.unlinkSync(localFilePath);
+          console.log(`Temporary file ${localFilePath} deleted`);
+        } catch (cleanupErr) {
+          console.warn("Error deleting temporary file:", cleanupErr);
+        }
+      }
+    }
+  } catch (error: unknown) {
+    console.error("Error in upload-file endpoint:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error in upload-file endpoint",
       details: error instanceof Error ? error.stack : undefined,
     });
   }
