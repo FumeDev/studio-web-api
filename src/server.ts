@@ -1987,7 +1987,10 @@ app.post("/upload-file", async (req: Request, res: Response) => {
     }
 
     try {
-      await stagehand!.page.waitForSelector(inputSelector, { timeout: 10000 });
+      // For hidden inputs `waitForSelector` will keep waiting for visibility by default, so we
+      // explicitly wait for the element to be *attached* (present in the DOM) regardless of
+      // its visibility. Playwright can still set files on a hidden <input type="file">.
+      await stagehand!.page.waitForSelector(inputSelector, { timeout: 10000, state: "attached" });
       await stagehand!.page.setInputFiles(inputSelector, localFilePath);
       console.log(`File set on input ${inputSelector}`);
 
