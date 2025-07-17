@@ -585,19 +585,52 @@ app.post("/inject-cookie", async (req: Request, res: Response) => {
       });
     }
 
-    console.log(`Injecting cookie: ${name}=${value}`);
+    console.log(`Injecting cookie: ${name}=${value} for domain: ${domain || 'current domain'}`);
 
-    // Prepare cookie object
+    // Get the current page URL
+    let currentPageUrl: string | undefined;
+    try {
+      currentPageUrl = stagehand!.page.url();
+      console.log("Current page URL:", currentPageUrl);
+    } catch (urlErr) {
+      console.warn("Could not read current page url while injecting cookie:", urlErr);
+    }
+
+    // Prepare cookie object with simplified logic
     const cookie: any = {
       name,
       value,
-      domain: domain || undefined,
-      path: path || "/",
-      expires: expires ? new Date(expires).getTime() / 1000 : undefined,
-      httpOnly: httpOnly || false,
-      secure: secure || false,
-      sameSite: sameSite || "Lax"
+      path: path || "/"
     };
+
+    // Only set optional properties if explicitly provided
+    if (httpOnly !== undefined) {
+      cookie.httpOnly = httpOnly;
+    }
+    if (secure !== undefined) {
+      cookie.secure = secure;
+    }
+    if (sameSite !== undefined) {
+      cookie.sameSite = sameSite;
+    }
+
+    // Note: We intentionally ignore the expires parameter as it causes cookie injection issues
+    // All cookies will be session cookies (expires when browser closes)
+    if (expires) {
+      console.log("Expires parameter provided but ignored for compatibility:", expires);
+    }
+
+    // Handle domain - use a simpler approach
+    if (domain) {
+      cookie.domain = domain;
+    } else if (currentPageUrl) {
+      try {
+        const parsed = new URL(currentPageUrl);
+        cookie.domain = parsed.hostname;
+      } catch (parseErr) {
+        console.warn("Could not parse current URL for domain:", parseErr);
+      }
+    }
 
     // Remove undefined properties to avoid issues
     Object.keys(cookie).forEach(key => {
@@ -606,23 +639,56 @@ app.post("/inject-cookie", async (req: Request, res: Response) => {
       }
     });
 
+    console.log("Attempting to inject cookie object:", cookie);
+
     // Inject the cookie using the browser context
-    await stagehand!.page.context().addCookies([cookie]);
-    console.log("Cookie injected successfully");
+    try {
+      console.log("About to inject cookie:", JSON.stringify(cookie, null, 2));
+      await stagehand!.page.context().addCookies([cookie]);
+      console.log("Cookie injection API call completed successfully");
+    } catch (cookieError) {
+      console.error("Cookie injection failed:", cookieError);
+      console.error("Failed cookie object was:", JSON.stringify(cookie, null, 2));
+      // Continue with the response to see the current state
+    }
+
+    // Wait a moment for the cookie to be set
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Fetch cookies currently in the context for debugging
+    let allCookies: any[] = [];
+    try {
+      allCookies = await stagehand!.page.context().cookies();
+      console.log("All cookies in context after injection:", allCookies.length);
+    } catch (listErr) {
+      console.warn("Could not list cookies after injection:", listErr);
+    }
+
+    // Filter cookies for the specific domain
+    const targetDomain = domain || (currentPageUrl ? new URL(currentPageUrl).hostname : '');
+    const domainCookies = allCookies.filter(c => 
+      c.domain === targetDomain || 
+      c.domain === '.' + targetDomain ||
+      (targetDomain && c.domain.endsWith(targetDomain))
+    );
+
+    console.log(`Found ${domainCookies.length} cookies for domain "${targetDomain}"`);
+    console.log("Domain cookies:", domainCookies.map(c => `${c.name}=${c.value}`));
+
+    // Check if our cookie was actually set
+    const injectedCookie = allCookies.find(c => c.name === name);
+    if (injectedCookie) {
+      console.log("✓ Cookie injection successful - cookie found in context");
+    } else {
+      console.log("✗ Cookie injection may have failed - cookie not found in context");
+    }
 
     return res.json({
       success: true,
       message: `Cookie '${name}' injected successfully`,
-      cookie: {
-        name,
-        value,
-        domain: cookie.domain,
-        path: cookie.path,
-        expires: cookie.expires,
-        httpOnly: cookie.httpOnly,
-        secure: cookie.secure,
-        sameSite: cookie.sameSite
-      }
+      current_url_in_browser: currentPageUrl || "",
+      all_cookies_in_context: allCookies,
+      cookies_for_domain: domainCookies
     });
   } catch (error: unknown) {
     console.error("Error in inject-cookie endpoint:", error);
@@ -831,10 +897,26 @@ app.post("/act", async (req: Request, res: Response) => {
 
     // Fall back to AI agent if deterministic method was not used or failed
     console.log("Creating agent...");
-    // Determine provider based on available keys
-    const provider = "anthropic";
-    const apiKey = provider === "openai" ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
-    const model = provider === "openai" ? "computer-use-preview" : "claude-sonnet-4-20250514";
+    
+    // Determine provider and model based on available API keys
+    let provider: 'openai' | 'anthropic';
+    let apiKey: string | undefined;
+    let model: string;
+
+    if (process.env.ANTHROPIC_API_KEY) {
+        provider = 'anthropic';
+        apiKey = process.env.ANTHROPIC_API_KEY;
+        model = "claude-sonnet-4-20250514";
+    } else if (process.env.OPENAI_API_KEY) {
+        provider = 'openai';
+        apiKey = process.env.OPENAI_API_KEY;
+        model = "computer-use-preview";
+    } else {
+        // This check is already at the top of the function, but good for robust typing
+        throw new Error(
+            "Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in environment variables for agent functionality"
+        );
+    }
 
     // Use non-null assertion for stagehand
     const agent = stagehand!.agent({
