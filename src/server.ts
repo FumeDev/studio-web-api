@@ -1975,7 +1975,6 @@ app.post("/upload-file", async (req: Request, res: Response) => {
       file_input_description,
       file_base64,
       file_path,
-      file_name = "upload_file",
       post_upload_selector,
       post_upload_wait_ms = 10000
     } = req.body || {};
@@ -1987,6 +1986,15 @@ app.post("/upload-file", async (req: Request, res: Response) => {
       });
     }
 
+    // Track the selector finding journey
+    const selectorJourney: any = {
+      provided_selector: file_input_selector || null,
+      provided_description: file_input_description || null,
+      discovery_attempts: [],
+      final_selector: null,
+      discovery_method: null
+    };
+
     // Determine the selector to use
     let inputSelector: string | undefined = file_input_selector;
 
@@ -1997,8 +2005,19 @@ app.post("/upload-file", async (req: Request, res: Response) => {
           : "Find the file upload input or button on this page";
 
         console.log(`Attempting to discover file input selector using observe() with instruction: "${instruction}"`);
+        selectorJourney.discovery_attempts.push({
+          method: "observe",
+          instruction: instruction,
+          status: "attempting"
+        });
         
         const observations: any[] = await stagehand!.page.observe({ instruction });
+        selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].observations_count = observations.length;
+        selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].observations = observations.map(obs => ({
+          description: obs.description,
+          selector: obs.selector,
+          element_type: obs.element_type || 'unknown'
+        }));
 
         let candidate;
         if (file_input_description) {
@@ -2006,6 +2025,7 @@ app.post("/upload-file", async (req: Request, res: Response) => {
           candidate = observations[0];
           if (candidate) {
             console.log(`Using first observation based on description: "${candidate.description}"`);
+            selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].selection_strategy = "first_result_with_description";
           }
         } else {
           // Otherwise, find a candidate that looks like a file upload
@@ -2013,14 +2033,28 @@ app.post("/upload-file", async (req: Request, res: Response) => {
             const combined = `${obs.description || ''} ${obs.selector || ''}`.toLowerCase();
             return combined.includes('file') || combined.includes('upload');
           });
+          if (candidate) {
+            selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].selection_strategy = "keyword_match_file_upload";
+          }
         }
 
         if (candidate?.selector) {
           inputSelector = candidate.selector;
           console.log(`Discovered selector via observe(): ${inputSelector}`);
+          selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].status = "success";
+          selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].selected_candidate = candidate;
+          selectorJourney.discovery_method = "observe";
         } else {
+          selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].status = "no_suitable_candidate";
+          
           // Fallback: query DOM directly for common file inputs
           console.log("observe() did not return a suitable selector, falling back to direct DOM query.");
+          selectorJourney.discovery_attempts.push({
+            method: "dom_query",
+            query: 'input[type="file"]',
+            status: "attempting"
+          });
+          
           const handle = await stagehand!.page.$('input[type="file"]');
           if (handle) {
             inputSelector = await handle.evaluate((el: HTMLElement) => {
@@ -2029,17 +2063,32 @@ app.post("/upload-file", async (req: Request, res: Response) => {
               return 'input[type="file"]';
             });
             console.log(`Discovered selector via DOM query: ${inputSelector}`);
+            selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].status = "success";
+            selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].found_selector = inputSelector;
+            selectorJourney.discovery_method = "dom_query";
+          } else {
+            selectorJourney.discovery_attempts[selectorJourney.discovery_attempts.length - 1].status = "not_found";
           }
         }
       } catch (obsErr) {
         console.warn("Automatic selector discovery failed:", obsErr);
+        selectorJourney.discovery_attempts.push({
+          method: "error",
+          error: obsErr instanceof Error ? obsErr.message : "Unknown error",
+          status: "failed"
+        });
       }
+    } else {
+      selectorJourney.discovery_method = "provided";
     }
+
+    selectorJourney.final_selector = inputSelector;
 
     if (!inputSelector) {
       return res.status(404).json({
         success: false,
-        error: "Unable to locate file input element automatically. Please provide file_input_selector."
+        error: "Unable to locate file input element automatically. Please provide file_input_selector.",
+        selector_journey: selectorJourney
       });
     }
 
@@ -2054,7 +2103,10 @@ app.post("/upload-file", async (req: Request, res: Response) => {
         localFilePath = file_path;
       } else {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "upload_"));
-        localFilePath = path.join(tempDir, file_name);
+        // Generate a default filename with timestamp
+        const timestamp = Date.now();
+        const defaultFileName = `uploaded_file_${timestamp}`;
+        localFilePath = path.join(tempDir, defaultFileName);
         const buffer = Buffer.from(file_base64, "base64");
         fs.writeFileSync(localFilePath, buffer);
         tempFileCreated = true;
@@ -2064,7 +2116,8 @@ app.post("/upload-file", async (req: Request, res: Response) => {
       console.error("Error preparing file for upload:", prepError);
       return res.status(500).json({
         success: false,
-        error: prepError instanceof Error ? prepError.message : "Error preparing file for upload"
+        error: prepError instanceof Error ? prepError.message : "Error preparing file for upload",
+        selector_journey: selectorJourney
       });
     }
 
@@ -2096,13 +2149,17 @@ app.post("/upload-file", async (req: Request, res: Response) => {
 
       return res.json({
         success: true,
-        message: "File upload action completed successfully"
+        message: "File upload action completed successfully",
+        selector_journey: selectorJourney,
+        used_selector: inputSelector,
+        temp_file_created: tempFileCreated
       });
     } catch (uploadError) {
       console.error("File upload error:", uploadError);
       return res.status(500).json({
         success: false,
-        error: uploadError instanceof Error ? uploadError.message : "Unknown error during file upload"
+        error: uploadError instanceof Error ? uploadError.message : "Unknown error during file upload",
+        selector_journey: selectorJourney
       });
     } finally {
       if (tempFileCreated) {
