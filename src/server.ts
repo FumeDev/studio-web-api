@@ -2212,65 +2212,19 @@ app.post("/run-playwright", async (req: Request, res: Response) => {
       }
     );
 
-    // Instead of waiting for the promise to resolve (which may hang due to child processes),
-    // we'll poll the ProcessManager status and race with the promise
+    // Wait for the Playwright run to finish but enforce a hard 2-hour limit
+    const timeoutMs = 2 * 60 * 60 * 1000; // 2 hours
     const result = await Promise.race([
       cmdPromise,
-      new Promise(async (resolve, reject) => {
-        // Poll every 2 seconds to check if process completed
-        const pollInterval = 2000;
-        const maxWaitTime = 2 * 60 * 60 * 1000; // 2 hours max
-        const startTime = Date.now();
-        
-        while (Date.now() - startTime < maxWaitTime) {
-          await new Promise(r => setTimeout(r, pollInterval));
-          
-          const status = processManager.getProcessStatus(process_id);
-          
-          // Check if process exists and is no longer active
-          if (status && !status.isActive) {
-            console.log(`Process ${process_id} completed based on ProcessManager status`);
-            
-            // Parse output to determine if tests passed or failed
-            const output = status.output || "";
-            let exitCode = 0; // Default to success
-            
-            // Look for common Playwright failure indicators
-            if (output.includes("failed") || 
-                output.includes("Error:") ||
-                output.includes("FAILED") ||
-                /\d+\s+failed/.test(output)) {
-              exitCode = 1; // Indicate failure
-            }
-            
-            // Also check for explicit passing indicators
-            if (output.includes("passed") && !output.includes("failed")) {
-              exitCode = 0; // Success
-            }
-            
-            console.log(`Determined exit code ${exitCode} based on output analysis`);
-            
-            // Return a result object similar to what cmdPromise would return
-            resolve({
-              stdout: output,
-              stderr: "", // ProcessManager combines stdout/stderr
-              exitCode: exitCode,
-              workingDirectory: status.workingDirectory
-            });
-            return;
-          }
-          
-          // If status doesn't exist, the process might have been cleaned up
-          if (!status) {
-            console.warn(`Process ${process_id} status not found in ProcessManager, continuing to wait...`);
-          }
-        }
-        
-        // Timeout reached
-        console.error(`Playwright tests timed out after ${maxWaitTime / 1000 / 60} minutes for process ${process_id}`);
-        reject(new Error(`Playwright tests timed out after ${maxWaitTime / 1000 / 60} minutes`));
-      })
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Playwright tests timed out after ${timeoutMs / 1000 / 60} minutes`)), timeoutMs)
+      )
     ]);
+
+    // Fallback – ensure we always have an exitCode in the result object
+    if ((result as any).exitCode === undefined) {
+      (result as any).exitCode = 1;
+    }
 
     console.log(
       `Playwright tests completed for process id ${process_id} with exit code ${(result as any).exitCode}`
@@ -2288,6 +2242,11 @@ app.post("/run-playwright", async (req: Request, res: Response) => {
     if (stderr_truncated) {
       stderr = stderr.slice(-MAX_OUTPUT_SIZE);
     }
+
+    // Log once the response has actually been flushed – helps confirm the request finished
+    res.on("finish", () => {
+      console.log(`Response sent for Playwright run ${process_id}`);
+    });
 
     return res.json({
       success: (result as any).exitCode === 0,
