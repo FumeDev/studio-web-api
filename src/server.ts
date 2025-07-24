@@ -2181,6 +2181,76 @@ app.post("/upload-file", async (req: Request, res: Response) => {
   }
 });
 
+// ---- 12. Run Playwright Tests Endpoint ----
+app.post("/run-playwright", async (req: Request, res: Response) => {
+  try {
+    // Allow long-running Playwright tests (up to 2 hours)
+    res.setTimeout(2 * 60 * 60 * 1000);
+
+    // Use a unique process id so multiple runs can coexist if needed
+    const process_id = `run-playwright-${Date.now()}`;
+
+    console.log(`Starting Playwright tests with process id ${process_id}`);
+
+    // Prepare command – run as the same user (no sudo) and make sure we are in the correct directory
+    const command = "bash";
+    const args = [
+      "-c",
+      "cd /home/fume/boilerplate && npx playwright test --reporter=list --retries=0"
+    ];
+
+    // Start the process using the shared ProcessManager so we get robust output handling
+    const cmdPromise = processManager.startProcess(
+      process_id,
+      command,
+      args,
+      {
+        cwd: "/home/fume/boilerplate",
+        env: process.env,
+        // Disable built-in timeouts – tests can run for a long time
+        timeout: 0 as unknown as number // Cast to avoid type issues; 0 means no timeout
+      }
+    );
+
+    // Wait for the process to finish (can take a long time)
+    const result = await cmdPromise;
+
+    console.log(
+      `Playwright tests completed for process id ${process_id} with exit code ${result.exitCode}`
+    );
+
+    // Trim very large output to avoid overwhelming the client (keep the last 1MB)
+    const MAX_OUTPUT_SIZE = 1024 * 1024; // 1 MB
+    let stdout = result.stdout || "";
+    let stderr = result.stderr || "";
+    const stdout_truncated = stdout.length > MAX_OUTPUT_SIZE;
+    const stderr_truncated = stderr.length > MAX_OUTPUT_SIZE;
+    if (stdout_truncated) {
+      stdout = stdout.slice(-MAX_OUTPUT_SIZE);
+    }
+    if (stderr_truncated) {
+      stderr = stderr.slice(-MAX_OUTPUT_SIZE);
+    }
+
+    return res.json({
+      success: result.exitCode === 0,
+      exit_code: result.exitCode,
+      stdout,
+      stderr,
+      stdout_truncated,
+      stderr_truncated,
+      process_id
+    });
+  } catch (error: unknown) {
+    console.error("Error running Playwright tests:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error during Playwright run",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
 // ---- Server Listen ----
 const PORT = process.env.PORT || 5553;
 app.listen(PORT, () => {
