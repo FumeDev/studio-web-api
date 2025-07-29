@@ -2220,6 +2220,31 @@ app.post("/run-playwright", async (req: Request, res: Response) => {
       stderr = stderr.slice(-MAX_OUTPUT_SIZE);
     }
 
+    // Check for assertion results image file
+    const assertionImagePath = "/home/fume/boilerplate/assertion_results/failed-assertion.png";
+    let assertionImage = null;
+    
+    try {
+      if (fs.existsSync(assertionImagePath)) {
+        console.log(`Found assertion results image at ${assertionImagePath}`);
+        const imageBuffer = fs.readFileSync(assertionImagePath);
+        assertionImage = imageBuffer.toString('base64');
+        console.log(`Assertion image encoded, size: ${assertionImage.length} characters`);
+        
+        // Remove the image file after reading it
+        try {
+          fs.unlinkSync(assertionImagePath);
+          console.log(`Assertion image file removed: ${assertionImagePath}`);
+        } catch (deleteError) {
+          console.warn(`Error deleting assertion image file: ${deleteError instanceof Error ? deleteError.message : 'Unknown error'}`);
+        }
+      } else {
+        console.log(`No assertion results image found at ${assertionImagePath}`);
+      }
+    } catch (imageError) {
+      console.warn(`Error reading assertion image: ${imageError instanceof Error ? imageError.message : 'Unknown error'}`);
+    }
+
     // Log once the response has actually been flushed – helps confirm the request finished
     res.on("finish", () => {
       console.log(`Response sent for Playwright run ${process_id}`);
@@ -2232,7 +2257,8 @@ app.post("/run-playwright", async (req: Request, res: Response) => {
       stderr,
       stdout_truncated,
       stderr_truncated,
-      process_id
+      process_id,
+      assertion_image: assertionImage
     });
   } catch (error: unknown) {
     console.error("Error running Playwright tests:", error);
