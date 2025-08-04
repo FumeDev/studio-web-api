@@ -1,4 +1,19 @@
-import type { ConstructorParams, LogLine } from "@browserbasehq/stagehand";
+// Configuration types defined locally to avoid dependency issues
+type LogLine = { level: string; message: string; timestamp: Date };
+type ConstructorParams = {
+  env: string;
+  apiKey?: string;
+  projectId?: string;
+  debugDom?: boolean;
+  headless?: boolean;
+  logger?: (message: LogLine) => void;
+  domSettleTimeoutMs?: number;
+  browserbaseSessionCreateParams?: any;
+  enableCaching?: boolean;
+  browserbaseSessionID?: string;
+  modelName?: string;
+  modelClientOptions?: any;
+};
 import dotenv from "dotenv";
 
 dotenv.config();

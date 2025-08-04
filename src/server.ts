@@ -1,7 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
 import { Stagehand } from "../lib/stagehand/dist";
-import StagehandConfig from "./stagehand.config";
-import { ensureHeadlessConfig, logBrowserConfig } from "./browser-config";
 import { exec } from "child_process";
 import { promisify } from "util";
 import * as path from "path";
@@ -15,6 +13,12 @@ import { createReadStream } from 'fs';
 import { Readable } from 'stream';
 import * as http from 'http';
 import * as https from 'https';
+import { WebSocketServer, WebSocket } from 'ws';
+import cors from 'cors';
+import wrtc from '@roamhq/wrtc';
+const { RTCPeerConnection, RTCSessionDescription, RTCIceCandidate } = wrtc;
+const { RTCVideoSource } = wrtc.nonstandard;
+import { createCanvas, loadImage } from 'canvas';
 
 dotenv.config();
 
@@ -122,6 +126,15 @@ async function uploadToBunnyStorage(localFilePath: string, remoteFilePath: strin
 const execAsync = promisify(exec);
 
 const app = express();
+
+// Enable CORS for all origins
+app.use(cors({
+  origin: true, // Allow all origins in development
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
+
 // Increase JSON payload limit to accommodate base64 encoded files
 app.use(express.json({ limit: '50mb' }));
 
@@ -147,13 +160,16 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 });
 
 // ---- Reusable Browser Initialization Function ----
-async function ensureBrowserIsRunning(viewportSize: { width: number; height: number }): Promise<void> {
+async function ensureBrowserIsRunning(viewportSize: { width: number; height: number }, enableRemoteAccess: boolean = false): Promise<void> {
   // If browser is already running and responsive, do nothing
-  if (stagehand?.page) {
+  if (stagehand) {
     try {
-      await stagehand.page.evaluate(() => true);
-      console.log("Using existing browser session.");
-      return; // Browser is fine
+      // Check if stagehand is initialized by trying to access the page
+      if (stagehand.page) {
+        await stagehand.page.evaluate(() => true);
+        console.log("Using existing browser session.");
+        return; // Browser is fine
+      }
     } catch (error) {
       console.log("Existing browser session is no longer responsive, starting a new one");
       // Clean up the stale reference
@@ -187,26 +203,66 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
     );
   }
 
-  // Build the complete config with updated browser settings
+  // Build launch arguments for the browser
+  let browserArgs = ["--start-maximized"];
+  
+  // Add remote debugging arguments if enabled
+  if (enableRemoteAccess) {
+    // Use a random port to avoid conflicts
+    const debugPort = 9222 + Math.floor(Math.random() * 1000);
+    browserArgs.push(
+      `--remote-debugging-port=${debugPort}`,
+      "--remote-debugging-address=0.0.0.0",
+      "--disable-web-security",
+      "--disable-features=VizDisplayCompositor"
+    );
+    console.log(`Remote debugging enabled on port ${debugPort}`);
+  }
+
+  // Build the complete config with updated browser settings - simplified to avoid proxy errors
   let baseConfig = {
-    ...StagehandConfig, // Use all base config
-    headless: false, // Set headless mode directly
-    llm: llmConfig, // Add LLM config properly
-    env: "LOCAL",
-    domSettleTimeoutMs: 300_000,
-    logger: (message: any) => console.log(message),
+    env: "LOCAL" as const,
+    headless: false,
     debugDom: false,
-    // Add launch options for the browser
+    domSettleTimeoutMs: 300_000,
+    llm: llmConfig,
+    // Simplified browser options to avoid proxy configuration issues
+    browser: {
+      args: browserArgs,
+      headless: false
+    },
     launchOptions: {
-      args: ["--start-maximized"]
+      args: browserArgs,
+      headless: false,
+      devtools: enableRemoteAccess,
+      env: process.env // Pass environment variables
     }
   };
 
-  // Ensure headless mode is properly set
-  currentConfig = ensureHeadlessConfig(baseConfig);
+  // Use the base config directly to avoid issues with helper functions
+  currentConfig = baseConfig;
 
-  // Log the browser configuration
-  logBrowserConfig(currentConfig);
+  // Simple browser configuration logging
+  console.log('Browser configuration:');
+  console.log('- Running under PM2:', process.env.PM2_HOME !== undefined);
+  console.log('- Headless mode:', currentConfig.headless);
+  console.log('- Args includes headless=new:', currentConfig.browser?.args?.includes('--headless=new'));
+  console.log('- PUPPETEER_HEADLESS:', process.env.PUPPETEER_HEADLESS);
+
+  // Validate config before using it
+  if (!currentConfig || typeof currentConfig !== 'object') {
+    console.error("Invalid config object, creating minimal fallback");
+    currentConfig = {
+      env: "LOCAL" as const,
+      headless: false,
+      llm: llmConfig
+    };
+  }
+
+  // Ensure required fields exist
+  if (!currentConfig.env) currentConfig.env = "LOCAL" as const;
+  if (!currentConfig.llm) currentConfig.llm = llmConfig;
+  if (currentConfig.headless === undefined) currentConfig.headless = false;
 
   console.log("Creating Stagehand with config:", {
     ...currentConfig,
@@ -219,7 +275,7 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
   console.log("Creating new Stagehand instance...");
 
   // Try multiple times to initialize the browser, with a delay between attempts
-  const maxRetries = 3;
+  const maxRetries = 2; // Reduced retries to speed up
   let lastError = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -227,13 +283,27 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
       console.log(`Browser launch attempt ${attempt + 1}/${maxRetries}`);
       stagehand = new Stagehand(currentConfig);
 
-      // Initialize (launch browser, etc.)
-      await stagehand.init();
+      // Initialize with timeout (launch browser, etc.)
+      const initPromise = stagehand.init();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Browser initialization timeout after 30 seconds')), 30000);
+      });
+      
+      await Promise.race([initPromise, timeoutPromise]);
       console.log("Stagehand initialized successfully");
 
+      // Wait a moment for the browser to be fully ready
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Verify page is available before proceeding
+      if (!stagehand?.page) {
+        throw new Error("Stagehand page not available after initialization");
+      }
+
       // Add initialization script to maintain zoom level and modify placeholders
-      await stagehand.page.addInitScript(() => {
-        const setupPage = () => {
+      try {
+        await stagehand.page.addInitScript(() => {
+          const setupPage = () => {
           // Function to update placeholders
           const updatePlaceholders = () => {
             const inputs = document.querySelectorAll('input, textarea');
@@ -268,6 +338,9 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
 
         setupPage();
       });
+      } catch (initScriptError) {
+        console.log("Error adding init script (non-fatal):", initScriptError);
+      }
 
       // Function to apply our modifications after navigation
       const applyModifications = async () => {
@@ -323,10 +396,24 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
         });
       }
 
-      // Navigate to Google initially
+      // Navigate to Google initially, but don't fail if navigation issues occur
       console.log("Navigating to Google...");
-      await stagehand.page.goto("https://www.google.com");
-      console.log("Initial navigation to Google complete");
+      try {
+        await stagehand.page.goto("https://www.google.com", { 
+          waitUntil: 'networkidle',
+          timeout: 15000 
+        });
+        console.log("Initial navigation to Google complete");
+      } catch (navError) {
+        console.log("Navigation to Google failed, trying with basic page:", navError);
+        try {
+          await stagehand.page.goto("about:blank", { timeout: 5000 });
+          console.log("Navigation to blank page successful");
+        } catch (blankError) {
+          console.log("Navigation to blank page also failed, but continuing with current page");
+          // Don't throw error, continue with whatever page we have
+        }
+      }
 
       // Get screen dimensions and set viewport to maximize window
       try {
@@ -346,6 +433,13 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
     } catch (error) {
       lastError = error;
       console.error(`Attempt ${attempt + 1} failed:`, error);
+      
+      // If browser was initialized successfully but navigation failed, 
+      // and WebRTC is active, don't treat this as a complete failure
+      if (stagehand && stagehand.page && Object.keys(webrtcClients).length > 0) {
+        console.log('Browser initialized but navigation failed - continuing with WebRTC');
+        return;
+      }
 
       // Handle specific proxy error gracefully
       if (
@@ -354,38 +448,71 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
         error.message.includes("Cannot create proxy with a non-object as target or handler")
       ) {
         console.error(
-          "Critical Stagehand initialization error: Cannot create proxy with a non-object as target or handler. This usually indicates a configuration or library bug. Aborting further attempts."
+          "Stagehand proxy configuration error detected. Trying with minimal config..."
         );
-        // Clean up failed instance
-        if (stagehand) {
-          try {
-            await stagehand.close();
-          } catch (closeError) {
-            console.error("Error closing stagehand:", closeError);
+        
+        // Try with absolutely minimal config
+        const minimalConfig = {
+          env: "LOCAL" as const,
+          headless: false,
+          llm: llmConfig
+        };
+        
+        try {
+          console.log("Attempting minimal Stagehand configuration...");
+          stagehand = new Stagehand(minimalConfig);
+          await Promise.race([
+            stagehand.init(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000))
+          ]);
+          console.log("Minimal Stagehand config succeeded");
+          break; // Success, exit retry loop
+        } catch (minimalError) {
+          console.error("Minimal config also failed:", minimalError instanceof Error ? minimalError.message : minimalError);
+          // Clean up and continue with next attempt
+          if (stagehand) {
+            try {
+              await stagehand.close();
+            } catch (closeError) {
+              console.error("Error closing stagehand:", closeError instanceof Error ? closeError.message : closeError);
+            }
+            stagehand = null;
           }
-          stagehand = null;
         }
-        currentConfig = null;
-        // Throw a user-friendly error (regular Error)
-        throw new Error(
-          "Failed to initialize browser: Internal configuration or library error (Cannot create proxy with a non-object as target or handler). Please check your Stagehand configuration and library version."
-        );
       }
 
-      // Clean up failed instance
-      if (stagehand) {
+      // For WebRTC scenarios, we need to be more aggressive about recovery
+      const isWebRTCActive = Object.keys(webrtcClients).length > 0;
+      const isBrowserReallyDead = (error as Error).message && (
+        (error as Error).message.includes('Target page, context or browser has been closed') ||
+        (error as Error).message.includes('browser has been closed') ||
+        (error as Error).message.includes('Execution context was destroyed')
+      );
+
+      // Clean up failed instance - even if WebRTC is active, if browser is dead we need to restart
+      if (stagehand && (Object.keys(webrtcClients).length === 0 || isBrowserReallyDead)) {
         try {
           await stagehand.close();
         } catch (closeError) {
           console.error("Error closing stagehand:", closeError);
         }
-        stagehand = null;
+        // Always set to null if browser is dead
+        if (attempt >= maxRetries - 1 || isBrowserReallyDead) {
+          stagehand = null;
+        }
+      } else if (stagehand && isWebRTCActive && !isBrowserReallyDead) {
+        console.log('Skipping browser close - WebRTC clients are active and browser seems responsive');
       }
 
-      // Wait before retrying
+      // Wait before retrying (reduced wait time)
       if (attempt < maxRetries - 1) {
-        console.log(`Waiting 5 seconds before retry ${attempt + 2}...`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        // If WebRTC clients are connected but browser is dead, continue retrying
+        if (isWebRTCActive && !isBrowserReallyDead) {
+          console.log('WebRTC clients are active and browser seems responsive, stopping retries');
+          return;
+        }
+        console.log(`Waiting 1 second before retry ${attempt + 2}...`);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     }
   }
@@ -403,7 +530,7 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
 // ---- 1. Start Browser Endpoint ----
 app.post("/start_browser", async (req: Request, res: Response) => {
   try {
-    const { isLarge = false, width, height } = req.body || {};
+    const { isLarge = false, width, height, enableRemoteAccess = false } = req.body || {};
     
     // Set viewport size based on provided dimensions or isLarge parameter
     let viewportSize;
@@ -422,13 +549,89 @@ app.post("/start_browser", async (req: Request, res: Response) => {
     }
     
     // Ensure the browser is running using the reusable function
-    await ensureBrowserIsRunning(viewportSize);
+    await ensureBrowserIsRunning(viewportSize, enableRemoteAccess);
+
+    // Get remote access information if enabled
+    let remoteAccessInfo = null;
+    if (enableRemoteAccess && stagehand) {
+      try {
+        // Get the browser and page information
+        const browser = stagehand.page.context().browser();
+        const pageUrl = stagehand.page.url();
+        
+        // For Playwright, we need to get the CDP endpoint differently
+        let cdpUrl = null;
+        let debugPort = 9222; // Default CDP port
+        
+        if (browser) {
+          // Try to get the CDP endpoint - this varies by browser implementation
+          try {
+            // Access the internal CDP session if available
+            const browserType = (browser as any)._connection?._url;
+            if (browserType) {
+              cdpUrl = browserType;
+              const cdpUrlMatch = browserType.match(/:(\d+)/);
+              if (cdpUrlMatch) {
+                debugPort = parseInt(cdpUrlMatch[1]);
+              }
+            }
+          } catch (e) {
+            console.log("Could not extract CDP URL from browser connection");
+          }
+        }
+        
+        // Get server host/port for constructing URLs
+        const serverHost = req.get('host')?.split(':')[0] || 'localhost';
+        const serverPort = process.env.PORT || 5553;
+        
+        remoteAccessInfo = {
+          cdp: {
+            websocket_url: cdpUrl,
+            http_endpoint: `http://${serverHost}:${debugPort}`,
+            debug_port: debugPort
+          },
+          browser: {
+            current_url: pageUrl,
+            viewport: viewportSize
+          },
+          connection: {
+            proxy_url: `http://${serverHost}:${serverPort}`,
+                      streaming_endpoints: {
+            screenshot: `http://${serverHost}:${serverPort}/screenshot`,
+            vnc_proxy: `ws://${serverHost}:${serverPort}/vnc-proxy`,
+            webrtc_signaling: `ws://${serverHost}:${serverPort}/webrtc-signal`,
+            cdp_streaming: `ws://${serverHost}:${serverPort}/cdp-stream`
+          }
+          },
+          usage_examples: {
+            screenshot_polling: {
+              url: `http://${serverHost}:${serverPort}/screenshot`,
+              method: "GET",
+              interval_ms: 1000
+            },
+            cdp_websocket: {
+              url: cdpUrl,
+              example_command: {
+                id: 1,
+                method: "Page.captureScreenshot",
+                params: { format: "png", quality: 80 }
+              }
+            },
+            react_component_url: `http://${serverHost}:${serverPort}/chrome-streamer-component`
+          }
+        };
+      } catch (accessError) {
+        console.warn("Failed to get remote access info:", accessError);
+        remoteAccessInfo = { error: "Failed to retrieve remote access information" };
+      }
+    }
 
     // If we got here, the browser is running (either new or existing)
     return res.json({
       success: true,
       message: "Browser session is active",
-      viewport: viewportSize
+      viewport: viewportSize,
+      remote_access: remoteAccessInfo
     });
   } catch (error: unknown) {
     console.error("Error in start_browser endpoint:", error);
@@ -436,6 +639,43 @@ app.post("/start_browser", async (req: Request, res: Response) => {
       success: false,
       error: error instanceof Error ? error.message : "Failed to start browser",
       details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- 1.5. Stop Browser Endpoint ----
+app.post("/stop_browser", async (req: Request, res: Response) => {
+  try {
+    if (stagehand) {
+      console.log("Closing browser session...");
+      
+      // Stop CDP screencast if active
+      await stopCDPScreencast();
+      
+      try {
+        // Only try to close if stagehand is properly initialized
+        if (stagehand.page) {
+          await stagehand.close();
+        }
+      } catch (closeError) {
+        console.log("Error during stagehand close, but continuing with cleanup:", closeError);
+      }
+      stagehand = null;
+      currentConfig = null;
+      console.log("Browser session cleaned up successfully");
+    }
+
+    return res.json({
+      success: true,
+      message: "Browser session stopped"
+    });
+  } catch (error: unknown) {
+    console.error("Error stopping browser:", error);
+    // Always return success for stop operations to prevent infinite loops
+    return res.json({
+      success: true,
+      message: "Browser session cleanup attempted",
+      warning: error instanceof Error ? error.message : "Unknown error during cleanup"
     });
   }
 });
@@ -703,6 +943,16 @@ app.post("/inject-cookie", async (req: Request, res: Response) => {
 // ---- 3. Screenshot Endpoint ----
 app.get("/screenshot", async (req: Request, res: Response) => {
   try {
+    // Check if another screenshot is in progress
+    if (isScreenshotInProgress) {
+      return res.status(429).json({
+        success: false,
+        error: "Screenshot in progress, please try again"
+      });
+    }
+    
+    isScreenshotInProgress = true;
+    
     // Ensure the browser is running using the reusable function
     await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE);
 
@@ -787,6 +1037,8 @@ app.get("/screenshot", async (req: Request, res: Response) => {
       error: error instanceof Error ? error.message : "Unknown error during screenshot",
       details: error instanceof Error ? error.stack : undefined,
     });
+  } finally {
+    isScreenshotInProgress = false;
   }
 });
 
@@ -2270,9 +2522,1083 @@ app.post("/run-playwright", async (req: Request, res: Response) => {
   }
 });
 
+app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
+  try {
+    // Allow long-running Playwright tests (up to 2 hours)
+    res.setTimeout(2 * 60 * 60 * 1000);
+
+    // Use a unique process id so multiple runs can coexist if needed
+    const process_id = `run-playwright-${Date.now()}`;
+
+    console.log(`Starting Playwright tests with process id ${process_id}`);
+
+    // Prepare command – run as the same user (no sudo) and make sure we are in the correct directory
+    // Use the existing Chrome session on the default debugger port (9222)
+    const command = "bash";
+    const args = [
+      "-c",
+      "cd /home/fume/tmp/boilerplate && npx playwright test --reporter=list --retries=0 --browser-ws-endpoint=ws://localhost:9222"
+    ];
+
+    // Start the process using the shared ProcessManager so we get robust output handling
+    const cmdPromise = processManager.startProcess(
+      process_id,
+      command,
+      args,
+      {
+        cwd: "/home/fume/tmp/boilerplate",
+        env: process.env,
+        // Disable built-in timeouts – tests can run for a long time
+        timeout: 0 as unknown as number // Cast to avoid type issues; 0 means no timeout
+      }
+    );
+
+    // Wait for the Playwright run to finish but enforce a hard 2-hour limit
+    const timeoutMs = 2 * 60 * 60 * 1000; // 2 hours
+    const result = await Promise.race([
+      cmdPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Playwright tests timed out after ${timeoutMs / 1000 / 60} minutes`)), timeoutMs)
+      )
+    ]);
+
+    // Fallback – ensure we always have an exitCode in the result object
+    if ((result as any).exitCode === undefined) {
+      (result as any).exitCode = 1;
+    }
+
+    console.log(
+      `Playwright tests completed for process id ${process_id} with exit code ${(result as any).exitCode}`
+    );
+
+    // Trim very large output to avoid overwhelming the client (keep the last 1MB)
+    const MAX_OUTPUT_SIZE = 1024 * 1024; // 1 MB
+    let stdout = (result as any).stdout || "";
+    let stderr = (result as any).stderr || "";
+    const stdout_truncated = stdout.length > MAX_OUTPUT_SIZE;
+    const stderr_truncated = stderr.length > MAX_OUTPUT_SIZE;
+    if (stdout_truncated) {
+      stdout = stdout.slice(-MAX_OUTPUT_SIZE);
+    }
+    if (stderr_truncated) {
+      stderr = stderr.slice(-MAX_OUTPUT_SIZE);
+    }
+
+    // Check for assertion results image file
+    const assertionImagePath = "/home/fume/boilerplate/assertion_results/failed-assertion.png";
+    let assertionImage = null;
+    
+    try {
+      if (fs.existsSync(assertionImagePath)) {
+        console.log(`Found assertion results image at ${assertionImagePath}`);
+        const imageBuffer = fs.readFileSync(assertionImagePath);
+        assertionImage = imageBuffer.toString('base64');
+        console.log(`Assertion image encoded, size: ${assertionImage.length} characters`);
+        
+        // Remove the image file after reading it
+        try {
+          fs.unlinkSync(assertionImagePath);
+          console.log(`Assertion image file removed: ${assertionImagePath}`);
+        } catch (deleteError) {
+          console.warn(`Error deleting assertion image file: ${deleteError instanceof Error ? deleteError.message : 'Unknown error'}`);
+        }
+      } else {
+        console.log(`No assertion results image found at ${assertionImagePath}`);
+      }
+    } catch (imageError) {
+      console.warn(`Error reading assertion image: ${imageError instanceof Error ? imageError.message : 'Unknown error'}`);
+    }
+
+    // Log once the response has actually been flushed – helps confirm the request finished
+    res.on("finish", () => {
+      console.log(`Response sent for Playwright run ${process_id}`);
+    });
+
+    return res.json({
+      success: (result as any).exitCode === 0,
+      exit_code: (result as any).exitCode,
+      stdout,
+      stderr,
+      stdout_truncated,
+      stderr_truncated,
+      process_id,
+      assertion_image: assertionImage
+    });
+  } catch (error: unknown) {
+    console.error("Error running Playwright tests:", error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error during Playwright run",
+      details: error instanceof Error ? error.stack : undefined,
+    });
+  }
+});
+
+// ---- CDP Proxy Endpoint ----
+app.get("/cdp-info", async (req: Request, res: Response) => {
+  try {
+    if (!stagehand?.page) {
+      return res.status(400).json({
+        success: false,
+        error: "No active browser session"
+      });
+    }
+
+    const browser = stagehand.page.context().browser();
+    const pageUrl = stagehand.page.url();
+    
+    // Get tabs/pages information
+    const pages = stagehand.page.context().pages();
+    const tabs = pages.map((page, index) => ({
+      id: `page_${index}`,
+      title: page.url(),
+      url: page.url(),
+      type: 'page'
+    }));
+
+    res.json({
+      success: true,
+      version: {
+        Browser: "Chrome/Playwright",
+        "Protocol-Version": "1.3",
+        "User-Agent": await stagehand.page.evaluate(() => navigator.userAgent),
+        "V8-Version": "N/A",
+        webSocketDebuggerUrl: `ws://localhost:9222/devtools/page/${tabs[0]?.id || 'default'}`
+      },
+      tabs: tabs,
+      current_page: {
+        url: pageUrl,
+        title: await stagehand.page.title()
+      }
+    });
+  } catch (error) {
+    console.error("Error in CDP info endpoint:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+// ---- React Component Helper Endpoint ----
+app.get("/chrome-streamer-component", (req: Request, res: Response) => {
+  const serverHost = req.get('host')?.split(':')[0] || 'localhost';
+  const serverPort = process.env.PORT || 5553;
+  
+  const componentCode = `
+import React, { useState, useEffect, useRef } from 'react';
+
+const ChromeStreamer = () => {
+  const [screenshot, setScreenshot] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [currentUrl, setCurrentUrl] = useState('');
+  const intervalRef = useRef(null);
+
+  const startStreaming = async () => {
+    const fetchScreenshot = async () => {
+      try {
+        const response = await fetch('http://${serverHost}:${serverPort}/screenshot');
+        const data = await response.json();
+        if (data.success) {
+          setScreenshot('data:image/png;base64,' + data.data);
+          setCurrentUrl(data.current_url);
+        }
+      } catch (error) {
+        console.error('Error fetching screenshot:', error);
+      }
+    };
+
+    await fetchScreenshot();
+    intervalRef.current = setInterval(fetchScreenshot, 1000);
+    setIsConnected(true);
+  };
+
+  const stopStreaming = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setIsConnected(false);
+    setScreenshot(null);
+  };
+
+  const handleClick = async (e) => {
+    const rect = e.target.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    try {
+      await fetch('http://${serverHost}:${serverPort}/act', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: \`click at coordinates \${x}, \${y}\`,
+          selector: null,
+          action_type: 'click'
+        })
+      });
+    } catch (error) {
+      console.error('Error clicking:', error);
+    }
+  };
+
+  useEffect(() => {
+    return () => stopStreaming();
+  }, []);
+
+  return (
+    <div style={{ padding: '20px' }}>
+      <h2>Chrome Remote Streamer</h2>
+      <div style={{ marginBottom: '20px' }}>
+        <button onClick={startStreaming} disabled={isConnected}>
+          Start Streaming
+        </button>
+        <button onClick={stopStreaming} disabled={!isConnected} style={{ marginLeft: '10px' }}>
+          Stop Streaming
+        </button>
+      </div>
+      {currentUrl && (
+        <div style={{ marginBottom: '10px' }}>
+          <strong>Current URL:</strong> {currentUrl}
+        </div>
+      )}
+      {screenshot && (
+        <div>
+          <img
+            src={screenshot}
+            alt="Remote Chrome"
+            onClick={handleClick}
+            style={{
+              maxWidth: '100%',
+              border: '1px solid #ccc',
+              cursor: 'pointer'
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ChromeStreamer;
+  `;
+
+  res.type('text/javascript').send(componentCode);
+});
+
 // ---- Server Listen ----
 const PORT = process.env.PORT || 5553;
-app.listen(PORT, () => {
+
+// Create HTTP server for WebSocket support
+const server = http.createServer(app);
+
+// Single WebSocket server with path-based routing
+const wss = new WebSocketServer({ 
+  server,
+  verifyClient: (info: any) => {
+    const pathname = new URL(info.req.url!, `http://${info.req.headers.host}`).pathname;
+    return pathname === '/webrtc-signal' || pathname === '/cdp-stream';
+  }
+});
+
+let nextCDPClientId = 1;
+
+// Store WebRTC peer connections and signaling state
+const webrtcClients = new Map<WebSocket, {
+  id: string;
+  peerConnection: RTCPeerConnection | null;
+  isConnected: boolean;
+  videoSource: any | null;
+  frameInterval: NodeJS.Timeout | null;
+}>();
+
+let nextClientId = 1;
+
+// Screenshot semaphore to prevent concurrent screenshots
+let isScreenshotInProgress = false;
+
+// Function to convert RGBA to YUV420 planar format
+function rgbaToYuv420(rgbaData: Uint8Array, width: number, height: number): Uint8Array {
+  const ySize = width * height;
+  const uvSize = (width * height) / 4;
+  const yuvData = new Uint8Array(ySize + uvSize * 2);
+  
+  let yIndex = 0;
+  let uIndex = ySize;
+  let vIndex = ySize + uvSize;
+  
+  // Convert RGBA to YUV
+  for (let row = 0; row < height; row++) {
+    for (let col = 0; col < width; col++) {
+      const rgbaIndex = (row * width + col) * 4;
+      const r = rgbaData[rgbaIndex];
+      const g = rgbaData[rgbaIndex + 1];
+      const b = rgbaData[rgbaIndex + 2];
+      
+      // Convert RGB to YUV using standard coefficients
+      const y = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+      yuvData[yIndex++] = Math.max(0, Math.min(255, y));
+      
+      // Sample U and V at half resolution (4:2:0 subsampling)
+      if (row % 2 === 0 && col % 2 === 0) {
+        const u = Math.round(-0.147 * r - 0.289 * g + 0.436 * b + 128);
+        const v = Math.round(0.615 * r - 0.515 * g - 0.100 * b + 128);
+        yuvData[uIndex++] = Math.max(0, Math.min(255, u));
+        yuvData[vIndex++] = Math.max(0, Math.min(255, v));
+      }
+    }
+  }
+  
+  return yuvData;
+}
+
+// Function to create video track using simple screenshot approach
+async function createVideoTrackFromBrowser(peerConnection: any): Promise<any> {
+  try {
+    // Create RTCVideoSource for WebRTC
+    const source = new RTCVideoSource();
+    const track = source.createTrack();
+    
+    // Create a MediaStream and add the track to it
+    const stream = new wrtc.MediaStream();
+    stream.addTrack(track);
+    
+    console.log('MediaStream created:', {
+      id: stream.id,
+      active: stream.active,
+      tracks: stream.getTracks().map(t => ({
+        kind: t.kind,
+        id: t.id,
+        enabled: t.enabled,
+        readyState: t.readyState
+      }))
+    });
+    
+    // Add track to peer connection with the stream
+    peerConnection.addTrack(track, stream);
+    
+    console.log('Created RTCVideoSource with track');
+    
+    // Cache the expected buffer size once we determine it
+    let cachedExpectedBytes: number | null = null;
+    
+    // Simple function to capture and send frames
+    let isReconnecting = false;
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 5;
+    
+    const sendFrame = async () => {
+      if (isReconnecting || isScreenshotInProgress) return;
+      
+      isScreenshotInProgress = true;
+      try {
+        // Check if browser is available and responsive
+        if (!stagehand?.page) {
+          console.log('Stagehand page not available for frame capture, attempting reinitialization...');
+          isReconnecting = true;
+          try {
+            await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE, true); // Enable remote access for WebRTC
+            consecutiveErrors = 0;
+            console.log('Browser reinitialized successfully for WebRTC');
+          } catch (reinitError) {
+            console.error('Failed to reinitialize browser:', reinitError);
+            consecutiveErrors++;
+          } finally {
+            isReconnecting = false;
+          }
+          return;
+        }
+        
+        // Check if page is still valid
+        if (stagehand.page.isClosed()) {
+          console.log('Browser page is closed, attempting reinitialization...');
+          isReconnecting = true;
+          try {
+            await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE, true);
+            consecutiveErrors = 0;
+            console.log('Browser reinitialized after page close');
+          } catch (reinitError) {
+            console.error('Failed to reinitialize browser after page close:', reinitError);
+            consecutiveErrors++;
+          } finally {
+            isReconnecting = false;
+          }
+          return;
+        }
+        
+        // Take screenshot as buffer
+        const screenshot = await stagehand.page.screenshot({
+          type: 'png',
+          fullPage: false
+        });
+        
+        // Load image and create canvas
+        const image = await loadImage(screenshot);
+        
+        // Use a reasonable resolution for video streaming
+        let targetWidth = 320;
+        let targetHeight = 240;
+        
+        const canvas = createCanvas(targetWidth, targetHeight);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+        
+        // Get raw RGBA data
+        const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+        
+        // Try using RGBA directly first to debug
+        const rgbaData = new Uint8Array(imageData.data);
+        
+        // If we haven't determined the expected buffer size yet, try to detect it
+        if (cachedExpectedBytes === null) {
+          console.log(`First frame: ${targetWidth}x${targetHeight}, RGBA data length: ${rgbaData.length}`);
+          
+          try {
+            const frame = {
+              width: targetWidth,
+              height: targetHeight,
+              data: rgbaData,
+              timestamp: Date.now() * 1000
+            };
+            
+            source.onFrame(frame);
+            // If successful, cache the buffer size
+            cachedExpectedBytes = rgbaData.byteLength;
+            console.log(`Frame sent successfully, cached buffer size: ${cachedExpectedBytes} bytes`);
+            
+          } catch (sizeError) {
+            console.log('RGBA failed, trying YUV conversion...');
+            // Convert RGBA to YUV420 planar format
+            const yuvData = rgbaToYuv420(rgbaData, targetWidth, targetHeight);
+            console.log(`Trying YUV: ${targetWidth}x${targetHeight}, YUV data length: ${yuvData.length}`);
+            
+            try {
+              const yuvFrame = {
+                width: targetWidth,
+                height: targetHeight,
+                data: yuvData,
+                timestamp: Date.now() * 1000
+              };
+              
+              source.onFrame(yuvFrame);
+              cachedExpectedBytes = yuvData.byteLength;
+              console.log(`YUV frame sent successfully, cached buffer size: ${cachedExpectedBytes} bytes`);
+              
+            } catch (yuvError: any) {
+              // Extract the expected size from the error message
+              const errorMessage = yuvError.message || '';
+              const expectedMatch = errorMessage.match(/Expected a \.byteLength of (\d+)/);
+              
+              if (expectedMatch) {
+                cachedExpectedBytes = parseInt(expectedMatch[1]);
+                console.log(`Detected expected buffer size: ${cachedExpectedBytes} bytes (got ${yuvData.byteLength})`);
+              } else {
+                console.error('Could not parse expected buffer size from error:', errorMessage);
+                throw yuvError;
+              }
+            }
+          }
+        }
+        
+        // Now use the cached expected buffer size
+        if (cachedExpectedBytes !== null) {
+          // Try RGBA first, then YUV if needed
+          let frameData = rgbaData;
+          if (cachedExpectedBytes !== rgbaData.byteLength) {
+            // Convert to YUV if RGBA size doesn't match
+            frameData = rgbaToYuv420(rgbaData, targetWidth, targetHeight);
+          }
+          
+          // Create a buffer of exactly the expected size
+          const exactBuffer = new ArrayBuffer(cachedExpectedBytes);
+          const exactView = new Uint8Array(exactBuffer);
+          
+          // Copy our frame data into the exact buffer (truncate or pad as needed)
+          const copyLength = Math.min(frameData.length, exactView.length);
+          exactView.set(frameData.subarray(0, copyLength), 0);
+          
+          // Create frame with the exact buffer size and proper timestamp
+          const frame = {
+            width: targetWidth,
+            height: targetHeight,
+            data: exactView,
+            timestamp: Date.now() * 1000  // microseconds
+          };
+          
+          source.onFrame(frame);
+        }
+        
+        // Reset consecutive error count on successful frame
+        consecutiveErrors = 0;
+        
+      } catch (error) {
+        consecutiveErrors++;
+        console.error(`Error capturing frame (error ${consecutiveErrors}/${maxConsecutiveErrors}):`, error);
+        
+        // If too many consecutive errors, send a black frame as fallback
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          console.log('Too many consecutive frame capture errors, sending black fallback frame');
+          try {
+            // Create a black frame as fallback
+            if (cachedExpectedBytes) {
+              const blackBuffer = new ArrayBuffer(cachedExpectedBytes);
+              const blackView = new Uint8Array(blackBuffer);
+              // Fill with black pixels (all zeros)
+              blackView.fill(0);
+              
+              const fallbackFrame = {
+                width: 320,
+                height: 240,
+                data: blackView,
+                timestamp: Date.now() * 1000
+              };
+              
+              source.onFrame(fallbackFrame);
+              console.log('Sent black fallback frame');
+            }
+          } catch (fallbackError) {
+            console.error('Failed to send fallback frame:', fallbackError);
+          }
+          return;
+        }
+        
+        // Try to reinitialize browser if page is closed or other critical errors
+        const errorMessage = (error as Error).message || '';
+        if (errorMessage.includes('Target page, context or browser has been closed') ||
+            errorMessage.includes('browser has been closed') ||
+            errorMessage.includes('Execution context was destroyed')) {
+          console.log('Browser/page lost, attempting reinitialization...');
+          isReconnecting = true;
+          try {
+            await ensureBrowserIsRunning(DEFAULT_VIEWPORT_SIZE, true);
+            console.log('Browser reinitialized after error');
+            consecutiveErrors = 0; // Reset on successful reinit
+          } catch (reinitError) {
+            console.error('Failed to reinitialize browser after error:', reinitError);
+          } finally {
+            isReconnecting = false;
+          }
+        }
+      } finally {
+        isScreenshotInProgress = false;
+      }
+    };
+    
+    // Send frames at 10 FPS for smoother video playback
+    const frameInterval = setInterval(sendFrame, 100);
+    
+    return { source, track, stream, frameInterval };
+    
+  } catch (error) {
+    console.error('Error setting up video capture:', error);
+    throw error;
+  }
+}
+
+// Single WebSocket connection handler with path-based routing
+wss.on('connection', (ws: WebSocket, req: any) => {
+  const pathname = new URL(req.url!, `http://${req.headers.host}`).pathname;
+  
+  if (pathname === '/cdp-stream') {
+    // CDP streaming connection handler
+  const clientId = `cdp_client_${nextCDPClientId++}`;
+  console.log(`CDP streaming client connected: ${clientId}`);
+  
+  const client: CDPStreamClient = {
+    id: clientId,
+    ws: ws,
+    isStreaming: false,
+    lastActivity: Date.now()
+  };
+  
+  cdpStreamClients.set(clientId, client);
+  
+  ws.on('message', async (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      
+      switch (message.type) {
+        case 'start-stream':
+          console.log(`Starting CDP stream for ${clientId}`);
+          client.isStreaming = true;
+          
+          // Start CDP screencast if not already started
+          if (!cdpSessionId) {
+            try {
+              // Ensure browser is running first
+              await ensureBrowserIsRunning({ width: 1280, height: 720 });
+              
+              await startCDPScreencast();
+              ws.send(JSON.stringify({
+                type: 'stream-started',
+                message: 'CDP streaming started successfully'
+              }));
+            } catch (error) {
+              console.error('Failed to start CDP screencast:', error);
+              client.isStreaming = false; // Reset streaming state on error
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: `Failed to start streaming: ${error}`
+              }));
+            }
+          } else {
+            ws.send(JSON.stringify({
+              type: 'stream-started',
+              message: 'CDP streaming already active'
+            }));
+          }
+          
+          // Send the last frame if available
+          if (lastCDPFrame) {
+            ws.send(JSON.stringify({
+              type: 'frame',
+              data: lastCDPFrame.data,
+              metadata: lastCDPFrame.metadata
+            }));
+          }
+          break;
+          
+        case 'stop-stream':
+          console.log(`Stopping CDP stream for ${clientId}`);
+          client.isStreaming = false;
+          
+          // Stop screencast if no clients are streaming
+          const activeClients = Array.from(cdpStreamClients.values()).filter(c => c.isStreaming);
+          if (activeClients.length === 0) {
+            await stopCDPScreencast();
+          }
+          break;
+          
+        case 'input':
+          // Handle input events
+          try {
+            await injectCDPInput(message.inputType, message.params);
+            ws.send(JSON.stringify({
+              type: 'input-ack',
+              inputType: message.inputType
+            }));
+          } catch (error) {
+            console.error(`Input injection error for ${clientId}:`, error);
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: `Input error: ${error}`
+            }));
+          }
+          break;
+          
+        default:
+          console.log(`Unknown CDP message type: ${message.type}`);
+      }
+    } catch (error) {
+      console.error(`Error parsing CDP message from ${clientId}:`, error);
+    }
+  });
+  
+  ws.on('close', () => {
+    console.log(`CDP streaming client disconnected: ${clientId}`);
+    cdpStreamClients.delete(clientId);
+    
+    // Stop screencast if no clients remain
+    if (cdpStreamClients.size === 0) {
+      stopCDPScreencast();
+    }
+  });
+  
+  ws.on('error', (error) => {
+    console.error(`CDP streaming error for ${clientId}:`, error);
+  });
+  
+  } else if (pathname === '/webrtc-signal') {
+    // WebRTC signaling connection handler
+  const clientId = `client_${nextClientId++}`;
+  console.log(`WebRTC signaling client connected: ${clientId}`);
+  
+  // Create a new peer connection for this client
+  const peerConnection = new RTCPeerConnection({
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' }
+    ]
+  });
+
+  webrtcClients.set(ws, {
+    id: clientId,
+    peerConnection: peerConnection,
+    isConnected: false,
+    videoSource: null,
+    frameInterval: null
+  });
+
+  // Handle ICE candidates
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      console.log(`Sending ICE candidate to ${clientId}`);
+      ws.send(JSON.stringify({
+        type: 'ice-candidate',
+        candidate: event.candidate
+      }));
+    }
+  };
+
+  // Handle connection state changes
+  peerConnection.onconnectionstatechange = () => {
+    console.log(`WebRTC connection state for ${clientId}:`, peerConnection.connectionState);
+    const client = webrtcClients.get(ws);
+    if (client) {
+      client.isConnected = peerConnection.connectionState === 'connected';
+    }
+  };
+
+  ws.on('message', async (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      console.log(`WebRTC message from ${clientId}:`, message.type);
+      
+      switch (message.type) {
+        case 'start-stream':
+          console.log(`Starting WebRTC stream for ${clientId}`);
+          
+          try {
+            // Create video track using simple screenshot approach
+            const { source, track, stream, frameInterval } = await createVideoTrackFromBrowser(peerConnection);
+            console.log(`Created video track and stream for ${clientId}`);
+            
+            // Store the video source and frame interval for this client
+            const client = webrtcClients.get(ws);
+            if (client) {
+              client.videoSource = source;
+              client.frameInterval = frameInterval;
+              console.log(`Video streaming started for ${clientId} at 10 FPS`);
+            }
+            
+            // Create an offer since we're the server
+            const offer = await peerConnection.createOffer({
+              offerToReceiveAudio: false,
+              offerToReceiveVideo: false  // We're sending video, not receiving
+            });
+            
+            await peerConnection.setLocalDescription(offer);
+            
+            // Send the offer to the client
+            ws.send(JSON.stringify({
+              type: 'offer',
+              offer: offer
+            }));
+            
+            console.log(`Sent WebRTC offer with video track to ${clientId}`);
+          } catch (error) {
+            console.error(`Error creating WebRTC offer for ${clientId}:`, error);
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Failed to create WebRTC offer'
+            }));
+          }
+          break;
+          
+        case 'answer':
+          console.log(`Received WebRTC answer from ${clientId}`);
+          try {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(message.answer));
+            console.log(`Set remote description for ${clientId}`);
+          } catch (error) {
+            console.error(`Error setting remote description for ${clientId}:`, error);
+          }
+          break;
+          
+        case 'ice-candidate':
+          console.log(`Received ICE candidate from ${clientId}`);
+          try {
+            if (message.candidate) {
+              await peerConnection.addIceCandidate(new RTCIceCandidate(message.candidate));
+              console.log(`Added ICE candidate for ${clientId}`);
+            }
+          } catch (error) {
+            console.error(`Error adding ICE candidate for ${clientId}:`, error);
+          }
+          break;
+          
+        default:
+          console.log(`Unknown WebRTC message type: ${message.type}`);
+      }
+    } catch (error) {
+      console.error(`Error parsing WebRTC message from ${clientId}:`, error);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log(`WebRTC signaling client disconnected: ${clientId}`);
+    const client = webrtcClients.get(ws);
+    if (client) {
+      if (client.frameInterval) {
+        clearInterval(client.frameInterval);
+        client.frameInterval = null;
+        console.log(`Stopped video streaming for ${clientId}`);
+      }
+      if (client.peerConnection) {
+        client.peerConnection.close();
+      }
+    }
+    webrtcClients.delete(ws);
+  });
+
+  ws.on('error', (error) => {
+    console.error(`WebRTC signaling error for ${clientId}:`, error);
+    const client = webrtcClients.get(ws);
+    if (client && client.frameInterval) {
+      clearInterval(client.frameInterval);
+      client.frameInterval = null;
+    }
+  });
+  
+  } else {
+    console.log('Unknown WebSocket path:', pathname);
+    ws.close();
+  }
+});
+
+// CDP Streaming System
+interface CDPStreamClient {
+  id: string;
+  ws: WebSocket;
+  isStreaming: boolean;
+  lastActivity: number;
+}
+
+// Store CDP streaming clients
+const cdpStreamClients = new Map<string, CDPStreamClient>();
+
+// CDP frame cache to handle rapid frame updates
+interface CDPFrame {
+  data: string; // base64 encoded image
+  metadata: {
+    timestamp: number;
+    deviceWidth: number;
+    deviceHeight: number;
+    pageScaleFactor: number;
+    offsetTop: number;
+    scrollX: number;
+    scrollY: number;
+  };
+}
+
+let lastCDPFrame: CDPFrame | null = null;
+let cdpSessionId: any = null;
+
+// Function to start CDP screencast
+async function startCDPScreencast() {
+  console.log('Starting CDP screencast...');
+  
+  if (!stagehand?.page) {
+    console.error('Stagehand page not available for CDP screencast');
+    throw new Error('Browser page not available');
+  }
+
+  // Ensure browser is responsive
+  try {
+    await stagehand.page.evaluate(() => true);
+    console.log('Browser page is responsive');
+  } catch (err) {
+    console.error('Browser page is not responsive:', err);
+    throw new Error('Browser page is not responsive');
+  }
+
+  try {
+    console.log('Creating CDP session...');
+    // Get CDP session
+    const client = await stagehand.page.context().newCDPSession(stagehand.page);
+    cdpSessionId = client;
+    console.log('CDP session created successfully');
+
+    // Configure screencast parameters
+    console.log('Configuring CDP screencast parameters...');
+    await client.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 80, // High quality JPEG
+      maxWidth: 1920,
+      maxHeight: 1080,
+      everyNthFrame: 1 // Capture every frame for smoothness
+    });
+    console.log('CDP screencast configuration sent successfully');
+
+    // Handle incoming frames
+    client.on('Page.screencastFrame', async (params: any) => {
+      const { sessionId, data, metadata } = params;
+      
+      // Acknowledge frame receipt (required by CDP)
+      await client.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+      
+      // Cache the frame
+      lastCDPFrame = {
+        data,
+        metadata: {
+          timestamp: metadata.timestamp * 1000,
+          deviceWidth: metadata.deviceWidth,
+          deviceHeight: metadata.deviceHeight, 
+          pageScaleFactor: metadata.pageScaleFactor || 1,
+          offsetTop: metadata.offsetTop || 0,
+          scrollX: metadata.scrollX || 0,
+          scrollY: metadata.scrollY || 0
+        }
+      };
+
+      // Broadcast to all connected clients
+      broadcastCDPFrame(lastCDPFrame);
+    });
+
+    console.log('CDP screencast started successfully');
+    return client;
+  } catch (error) {
+    console.error('Failed to start CDP screencast:', error);
+    throw error;
+  }
+}
+
+// Function to stop CDP screencast
+async function stopCDPScreencast() {
+  if (cdpSessionId) {
+    try {
+      await cdpSessionId.send('Page.stopScreencast');
+      cdpSessionId = null;
+    } catch (error) {
+      console.error('Error stopping CDP screencast:', error);
+    }
+  }
+}
+
+// Broadcast frame to all connected clients
+function broadcastCDPFrame(frame: CDPFrame) {
+  const message = JSON.stringify({
+    type: 'frame',
+    data: frame.data,
+    metadata: frame.metadata
+  });
+
+  cdpStreamClients.forEach(client => {
+    if (client.ws.readyState === WebSocket.OPEN && client.isStreaming) {
+      client.ws.send(message, (err) => {
+        if (err) {
+          console.error(`Error sending frame to client ${client.id}:`, err);
+        }
+      });
+      client.lastActivity = Date.now();
+    }
+  });
+}
+
+// Handle CDP input injection
+async function injectCDPInput(type: string, params: any) {
+  if (!stagehand?.page) {
+    throw new Error('Browser page not available');
+  }
+
+  const client = cdpSessionId || await stagehand.page.context().newCDPSession(stagehand.page);
+
+  try {
+    switch (type) {
+      case 'mouseMove':
+        await client.send('Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x: params.x,
+          y: params.y,
+          modifiers: params.modifiers || 0
+        });
+        break;
+
+      case 'mouseDown':
+        await client.send('Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x: params.x,
+          y: params.y,
+          button: params.button || 'left',
+          clickCount: params.clickCount || 1,
+          modifiers: params.modifiers || 0
+        });
+        break;
+
+      case 'mouseUp':
+        await client.send('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x: params.x,
+          y: params.y,
+          button: params.button || 'left',
+          modifiers: params.modifiers || 0
+        });
+        break;
+
+      case 'mouseWheel':
+        await client.send('Input.dispatchMouseEvent', {
+          type: 'mouseWheel',
+          x: params.x,
+          y: params.y,
+          deltaX: params.deltaX || 0,
+          deltaY: params.deltaY || 0,
+          modifiers: params.modifiers || 0
+        });
+        break;
+
+      case 'keyDown':
+        // Only include text parameter if it's provided and valid
+        const keyDownEvent: any = {
+          type: 'keyDown',
+          key: params.key,
+          code: params.code,
+          modifiers: params.modifiers || 0
+        };
+        
+        // Add keyCode if provided (important for special keys)
+        if (params.keyCode !== null && params.keyCode !== undefined) {
+          keyDownEvent.windowsVirtualKeyCode = params.keyCode;
+          keyDownEvent.nativeVirtualKeyCode = params.keyCode;
+        }
+        
+        // Only add text for printable characters
+        if (params.text && typeof params.text === 'string' && params.text.length === 1) {
+          const charCode = params.text.charCodeAt(0);
+          if (charCode >= 32 && charCode <= 126) {
+            keyDownEvent.text = params.text;
+          }
+        }
+        
+        await client.send('Input.dispatchKeyEvent', keyDownEvent);
+        break;
+
+      case 'keyUp':
+        const keyUpEvent: any = {
+          type: 'keyUp',
+          key: params.key,
+          code: params.code,
+          modifiers: params.modifiers || 0
+        };
+        
+        // Add keyCode if provided (important for special keys)
+        if (params.keyCode !== null && params.keyCode !== undefined) {
+          keyUpEvent.windowsVirtualKeyCode = params.keyCode;
+          keyUpEvent.nativeVirtualKeyCode = params.keyCode;
+        }
+        
+        await client.send('Input.dispatchKeyEvent', keyUpEvent);
+        break;
+
+      case 'insertText':
+        await client.send('Input.insertText', {
+          text: params.text
+        });
+        break;
+
+      default:
+        throw new Error(`Unknown input type: ${type}`);
+    }
+  } catch (error) {
+    console.error('CDP input injection error:', error);
+    console.error('Input type:', type);
+    console.error('Input params:', JSON.stringify(params, null, 2));
+    throw error;
+  }
+}
+
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Chrome streamer component available at: http://localhost:${PORT}/chrome-streamer-component`);
+  console.log(`WebRTC signaling available at: ws://localhost:${PORT}/webrtc-signal`);
+  console.log(`CDP streaming available at: ws://localhost:${PORT}/cdp-stream`);
 });
 
