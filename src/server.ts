@@ -2569,7 +2569,7 @@ app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
     }
 
     // Ensure the tmp directory exists
-    const tmpDir = '/home/fume/tmp/boilerplate/tmp/tests';
+    const tmpDir = '/home/fume/tmp/boilerplate/tests';
     try {
       await fs.promises.mkdir(tmpDir, { recursive: true });
     } catch (mkdirError) {
