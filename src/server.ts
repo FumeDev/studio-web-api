@@ -236,7 +236,7 @@ async function initializeBrowser(viewportSize: { width: number; height: number }
   // Add remote debugging arguments if enabled
   if (enableRemoteAccess) {
     // Use a random port to avoid conflicts
-    const debugPort = 9222 + Math.floor(Math.random() * 1000);
+    const debugPort = 9222;
     browserArgs.push(
       `--remote-debugging-port=${debugPort}`,
       "--remote-debugging-address=0.0.0.0",
@@ -2560,11 +2560,26 @@ app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
     console.log(`Starting Playwright tests with process id ${process_id}`);
 
     // Prepare command – run as the same user (no sudo) and make sure we are in the correct directory
-    // Use the existing Chrome session on the default debugger port (9222)
+    // Create a temporary playwright config to connect to existing Chrome instance
+    const tempConfigContent = `
+const { defineConfig } = require('@playwright/test');
+
+module.exports = defineConfig({
+  use: {
+    connectOptions: {
+      wsEndpoint: 'http://localhost:9222',
+    },
+  },
+  reporter: 'list',
+  retries: 0,
+  testIgnore: ['**/stagehand/**'], // Exclude stagehand directory to avoid conflicts
+});
+`;
+    
     const command = "bash";
     const args = [
       "-c",
-      "cd /home/fume/tmp/boilerplate && npx playwright test --reporter=list --retries=0 --browser-ws-endpoint=ws://localhost:9222"
+      `cd /home/fume/tmp/boilerplate && echo '${tempConfigContent}' > playwright.tmp.config.js && NODE_PATH=/home/fume/tmp/boilerplate/node_modules npx --prefix . playwright test --config=playwright.tmp.config.js && rm -f playwright.tmp.config.js`
     ];
 
     // Start the process using the shared ProcessManager so we get robust output handling
