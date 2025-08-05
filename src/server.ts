@@ -595,17 +595,17 @@ app.post("/start_browser", async (req: Request, res: Response) => {
             viewport: viewportSize
           },
           connection: {
-            proxy_url: `http://${serverHost}:${serverPort}`,
+            proxy_url: `http://${serverHost}`,
                       streaming_endpoints: {
-            screenshot: `http://${serverHost}:${serverPort}/screenshot`,
-            vnc_proxy: `ws://${serverHost}:${serverPort}/vnc-proxy`,
-            webrtc_signaling: `ws://${serverHost}:${serverPort}/webrtc-signal`,
-            cdp_streaming: `ws://${serverHost}:${serverPort}/cdp-stream`
+            screenshot: `http://${serverHost}/screenshot`,
+            vnc_proxy: `ws://${serverHost}/vnc-proxy`,
+            webrtc_signaling: `ws://${serverHost}/webrtc-signal`,
+            cdp_streaming: `ws://${serverHost}/cdp-stream`
           }
           },
           usage_examples: {
             screenshot_polling: {
-              url: `http://${serverHost}:${serverPort}/screenshot`,
+              url: `http://${serverHost}/screenshot`,
               method: "GET",
               interval_ms: 1000
             },
@@ -617,7 +617,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
                 params: { format: "png", quality: 80 }
               }
             },
-            react_component_url: `http://${serverHost}:${serverPort}/chrome-streamer-component`
+            react_component_url: `http://${serverHost}/chrome-streamer-component`
           }
         };
       } catch (accessError) {
