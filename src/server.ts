@@ -2569,11 +2569,21 @@ app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
 const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
+  // Don't try to launch a browser - we'll connect to existing one in the test
   use: {
-    connectOptions: {
-      wsEndpoint: 'http://localhost:9222',
-    },
+    // Remove automatic browser launching
+    launchOptions: undefined,
   },
+  projects: [
+    {
+      name: 'chromium',
+      use: { 
+        // Don't auto-launch browser
+        channel: undefined,
+        launchOptions: undefined,
+      },
+    },
+  ],
   reporter: 'list',
   retries: 0,
   testIgnore: ['**/stagehand/**'], // Exclude stagehand directory to avoid conflicts
