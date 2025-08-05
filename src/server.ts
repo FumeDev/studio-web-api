@@ -2626,10 +2626,15 @@ module.exports = defineConfig({
 });
 `;
     
+    // Write the temporary config file to disk to avoid shell quoting issues
+    const tempConfigPath = `/home/fume/tmp/boilerplate/playwright.tmp.config.${process_id}.js`;
+    await fs.promises.writeFile(tempConfigPath, tempConfigContent);
+    const tempConfigFileName = path.basename(tempConfigPath);
+    
     const command = "bash";
     const args = [
       "-c",
-      `cd /home/fume/tmp/boilerplate && echo '${tempConfigContent}' > playwright.tmp.config.js && NODE_PATH=/home/fume/tmp/boilerplate/node_modules npx --prefix . playwright test --config=playwright.tmp.config.js && rm -f playwright.tmp.config.js`
+      `cd /home/fume/tmp/boilerplate && NODE_PATH=/home/fume/tmp/boilerplate/node_modules npx --prefix . playwright test --config=${tempConfigFileName} && rm -f ${tempConfigFileName}`
     ];
 
     // Start the process using the shared ProcessManager so we get robust output handling
