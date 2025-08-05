@@ -233,16 +233,21 @@ async function initializeBrowser(viewportSize: { width: number; height: number }
   // Build launch arguments for the browser
   let browserArgs = ["--start-maximized"];
   
-  // Add remote debugging arguments if enabled
+  // Always enable remote debugging on port 9222 for Playwright connectivity
+  const debugPort = 9222;
+  browserArgs.push(
+    `--remote-debugging-port=${debugPort}`,
+    "--remote-debugging-address=0.0.0.0"
+  );
+  
+  // Add additional remote debugging arguments if enableRemoteAccess is true
   if (enableRemoteAccess) {
-    // Use a random port to avoid conflicts
-    const debugPort = 9222;
     browserArgs.push(
-      `--remote-debugging-port=${debugPort}`,
-      "--remote-debugging-address=0.0.0.0",
       "--disable-web-security",
       "--disable-features=VizDisplayCompositor"
     );
+    console.log(`Remote debugging enabled on port ${debugPort} with additional access options`);
+  } else {
     console.log(`Remote debugging enabled on port ${debugPort}`);
   }
 
