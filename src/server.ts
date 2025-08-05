@@ -2557,7 +2557,43 @@ app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
   try {
     // Allow long-running Playwright tests (up to 2 hours)
     res.setTimeout(2 * 60 * 60 * 1000);
+    
+    // Get test code and file path from request body
+    const { testCode, filePath } = req.body;
 
+    if (!testCode || !filePath) {
+      return res.status(400).json({
+        success: false,
+        error: "Both testCode and filePath are required"
+      });
+    }
+
+    // Ensure the tmp directory exists
+    const tmpDir = '/home/fume/tmp/boilerplate/tmp/tests';
+    try {
+      await fs.promises.mkdir(tmpDir, { recursive: true });
+    } catch (mkdirError) {
+      console.error("Error creating tmp directory:", mkdirError);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to create tmp directory"
+      });
+    }
+
+    // Write test code to file
+    const fullPath = path.join(tmpDir, filePath);
+    try {
+      // Ensure parent directory exists
+      await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.promises.writeFile(fullPath, testCode);
+      console.log(`Test file written to ${fullPath}`);
+    } catch (writeError) {
+      console.error("Error writing test file:", writeError);
+      return res.status(500).json({
+        success: false,
+        error: "Failed to write test file"
+      });
+    }
     // Use a unique process id so multiple runs can coexist if needed
     const process_id = `run-playwright-${Date.now()}`;
 
