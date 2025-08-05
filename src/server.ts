@@ -258,12 +258,8 @@ async function initializeBrowser(viewportSize: { width: number; height: number }
     debugDom: false,
     domSettleTimeoutMs: 300_000,
     llm: llmConfig,
-    // Simplified browser options to avoid proxy configuration issues
-    browser: {
-      args: browserArgs,
-      headless: false
-    },
-    launchOptions: {
+    // Local browser launch options with remote debugging port
+    localBrowserLaunchOptions: {
       args: browserArgs,
       headless: false,
       devtools: enableRemoteAccess,
@@ -279,6 +275,9 @@ async function initializeBrowser(viewportSize: { width: number; height: number }
   console.log('- Running under PM2:', process.env.PM2_HOME !== undefined);
   console.log('- Headless mode:', currentConfig.headless);
   console.log('- Args includes headless=new:', currentConfig.browser?.args?.includes('--headless=new'));
+  console.log('- Args includes remote-debugging-port:', currentConfig.browser?.args?.some((arg: string) => arg.includes('remote-debugging-port')));
+  console.log('- Browser args:', currentConfig.browser?.args);
+  console.log('- Launch options args:', currentConfig.launchOptions?.args);
   console.log('- PUPPETEER_HEADLESS:', process.env.PUPPETEER_HEADLESS);
 
   // Validate config before using it
