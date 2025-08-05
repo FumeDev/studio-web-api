@@ -587,7 +587,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
         remoteAccessInfo = {
           cdp: {
             websocket_url: cdpUrl,
-            http_endpoint: `http://${serverHost}:${debugPort}`,
+            http_endpoint: `https://${serverHost}:${debugPort}`,
             debug_port: debugPort
           },
           browser: {
@@ -597,15 +597,15 @@ app.post("/start_browser", async (req: Request, res: Response) => {
           connection: {
             proxy_url: `http://${serverHost}`,
                       streaming_endpoints: {
-            screenshot: `http://${serverHost}/screenshot`,
-            vnc_proxy: `ws://${serverHost}/vnc-proxy`,
-            webrtc_signaling: `ws://${serverHost}/webrtc-signal`,
-            cdp_streaming: `ws://${serverHost}/cdp-stream`
+            screenshot: `httpss://${serverHost}/screenshot`,
+            vnc_proxy: `wss://${serverHost}/vnc-proxy`,
+            webrtc_signaling: `wss://${serverHost}/webrtc-signal`,
+            cdp_streaming: `wss://${serverHost}/cdp-stream`
           }
           },
           usage_examples: {
             screenshot_polling: {
-              url: `http://${serverHost}/screenshot`,
+              url: `https://${serverHost}/screenshot`,
               method: "GET",
               interval_ms: 1000
             },
@@ -617,7 +617,7 @@ app.post("/start_browser", async (req: Request, res: Response) => {
                 params: { format: "png", quality: 80 }
               }
             },
-            react_component_url: `http://${serverHost}/chrome-streamer-component`
+            react_component_url: `https://${serverHost}/chrome-streamer-component`
           }
         };
       } catch (accessError) {
