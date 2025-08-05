@@ -138,9 +138,11 @@ app.use(cors({
 // Increase JSON payload limit to accommodate base64 encoded files
 app.use(express.json({ limit: '50mb' }));
 
-// We keep a single global Stagehand reference and a config
+// Global Stagehand instance for singleton browser management
 let stagehand: Stagehand | null = null;
-let currentConfig: any = null; // Holds dynamic runtime config (browser + LLM)
+let currentConfig: any = null;
+let isInitializingBrowser = false; // Lock to prevent concurrent browser initialization
+let browserInitPromise: Promise<void> | null = null; // Promise to await if initialization is in progress
 
 // Initialize process manager for command execution
 const processManager = ProcessManager.getInstance();
@@ -161,8 +163,15 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 // ---- Reusable Browser Initialization Function ----
 async function ensureBrowserIsRunning(viewportSize: { width: number; height: number }, enableRemoteAccess: boolean = false): Promise<void> {
+  // If browser initialization is already in progress, wait for it to complete
+  if (isInitializingBrowser && browserInitPromise) {
+    console.log("Browser initialization already in progress, waiting for completion...");
+    await browserInitPromise;
+    return;
+  }
+
   // If browser is already running and responsive, do nothing
-  if (stagehand) {
+  if (stagehand && !isInitializingBrowser) {
     try {
       // Check if stagehand is initialized by trying to access the page
       if (stagehand.page) {
@@ -179,6 +188,24 @@ async function ensureBrowserIsRunning(viewportSize: { width: number; height: num
     }
   }
 
+  // Set lock to prevent concurrent initialization
+  isInitializingBrowser = true;
+  
+  // Create a promise for the initialization process
+  browserInitPromise = (async () => {
+    try {
+      await initializeBrowser(viewportSize, enableRemoteAccess);
+    } finally {
+      // Always release the lock when done
+      isInitializingBrowser = false;
+      browserInitPromise = null;
+    }
+  })();
+
+  await browserInitPromise;
+}
+
+async function initializeBrowser(viewportSize: { width: number; height: number }, enableRemoteAccess: boolean): Promise<void> {
   // Build LLM config based on environment variables
   let llmConfig;
   if (process.env.ANTHROPIC_API_KEY) {
