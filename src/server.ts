@@ -2599,30 +2599,36 @@ app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
 
     console.log(`Starting Playwright tests with process id ${process_id}`);
 
-    // Prepare command – run as the same user (no sudo) and make sure we are in the correct directory
-    // Create a temporary playwright config to connect to existing Chrome instance
+    // --- Determine the Chrome DevTools Protocol endpoint of the running browser ---
+    // Stagehand launches Chrome with "--remote-debugging-port=9222" so we default to that.
+    let cdpEndpoint = "http://127.0.0.1:9222";
+    try {
+      if (stagehand) {
+        // `stagehand.page.context().browser()` is a Playwright Browser instance.
+        const conn = (stagehand.page.context().browser() as any)?._connection;
+        if (conn?._url) {
+          // ws://HOST:PORT/devtools/browser/<id>  ->  http://HOST:PORT
+          cdpEndpoint = conn._url.replace(/^ws:/, "http:").replace(/\/devtools.*/, "");
+        }
+      }
+    } catch (err) {
+      console.warn("Could not derive CDP endpoint, using default", cdpEndpoint);
+    }
+
+    // --- Temporary Playwright config that attaches to the existing browser ---
     const tempConfigContent = `
 const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
-  // Don't try to launch a browser - we'll connect to existing one in the test
-  use: {
-    // Remove automatic browser launching
-    launchOptions: undefined,
-  },
-  projects: [
-    {
-      name: 'chromium',
-      use: { 
-        // Don't auto-launch browser
-        channel: undefined,
-        launchOptions: undefined,
-      },
-    },
-  ],
-  reporter: 'list',
   retries: 0,
-  testIgnore: ['**/stagehand/**'], // Exclude stagehand directory to avoid conflicts
+  reporter: 'list',
+  testIgnore: ['**/stagehand/**'],
+  use: {
+    // Attach instead of launching a new browser
+    connectOverCDP: '${cdpEndpoint}',
+    headless: false,
+    viewport: null,
+  },
 });
 `;
     
