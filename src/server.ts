@@ -262,7 +262,7 @@ async function initializeBrowser(viewportSize: { width: number; height: number }
     localBrowserLaunchOptions: {
       args: browserArgs,
       headless: false,
-      devtools: enableRemoteAccess,
+      devtools: false, // Don't auto-open devtools panel
       env: process.env // Pass environment variables
     }
   };
