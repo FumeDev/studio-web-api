@@ -2599,45 +2599,33 @@ app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
 
     console.log(`Starting Playwright tests with process id ${process_id}`);
 
-    // --- Determine the Chrome DevTools Protocol endpoint of the running browser ---
-    // Stagehand launches Chrome with "--remote-debugging-port=9222" so we default to that.
     let cdpEndpoint = "http://127.0.0.1:9222";
-    try {
-      if (stagehand) {
-        // `stagehand.page.context().browser()` is a Playwright Browser instance.
-        const conn = (stagehand.page.context().browser() as any)?._connection;
-        if (conn?._url) {
-          // ws://HOST:PORT/devtools/browser/<id>  ->  http://HOST:PORT
-          cdpEndpoint = conn._url.replace(/^ws:/, "http:").replace(/\/devtools.*/, "");
-        }
-      }
-    } catch (err) {
-      console.warn("Could not derive CDP endpoint, using default", cdpEndpoint);
-    }
     console.log("CDP Endpoint:", cdpEndpoint);
 
     // --- Temporary Playwright config that attaches to the existing browser ---
     const tempConfigContent = `
-const { defineConfig } = require('@playwright/test');
+import type { PlaywrightTestConfig } from '@playwright/test';
 
-module.exports = defineConfig({
+const config: PlaywrightTestConfig = {
   retries: 0,
   reporter: 'list',
   testIgnore: ['**/stagehand/**'],
 
   projects: [
     {
-      name: 'chrome-cdp',
+      name: 'live-chrome',
       use: {
         browserName: 'chromium',
-        cdpEndpoint: '${cdpEndpoint}', // ← attach instead of launch
+        cdpEndpoint: process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222',
+        reuseExistingContext: true,
         headless: false,
-        viewport: null,
-        reuseExistingContext: true  // Playwright 1.42+ (optional but handy)
+        viewport: null
       }
     }
   ]
-});
+};
+
+export default config;
 `;
     
     // Write the temporary config file to disk to avoid shell quoting issues
@@ -2648,7 +2636,7 @@ module.exports = defineConfig({
     const command = "bash";
     const args = [
       "-c",
-      `cd /home/fume/tmp/boilerplate && NODE_PATH=/home/fume/tmp/boilerplate/node_modules npx --prefix . playwright test --config=${tempConfigFileName} && rm -f ${tempConfigFileName}`
+      `cd /home/fume/tmp/boilerplate && npx playwright test --config=${tempConfigFileName} && rm -f ${tempConfigFileName}`
     ];
 
     // Start the process using the shared ProcessManager so we get robust output handling
