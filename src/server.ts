@@ -2630,7 +2630,7 @@ export default config;
 `;
     
     // Write the temporary config file to disk to avoid shell quoting issues
-    const tempConfigPath = `/home/fume/tmp/boilerplate/playwright.tmp.config.${process_id}.js`;
+    const tempConfigPath = `/home/fume/tmp/boilerplate/playwright.tmp.config.${process_id}.ts`;
     await fs.promises.writeFile(tempConfigPath, tempConfigContent);
     const tempConfigFileName = path.basename(tempConfigPath);
     
