@@ -2616,7 +2616,8 @@ const config: PlaywrightTestConfig = {
       name: 'live-chrome',
       use: {
         browserName: 'chromium',
-        cdpEndpoint: process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222',
+        // Attach to the already-running Chrome via CDP instead of launching a new instance
+        connectOverCDP: process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222',
         reuseExistingContext: true,
         headless: false,
         viewport: null
