@@ -2630,7 +2630,6 @@ module.exports = defineConfig({
       name: 'chrome-cdp',
       use: {
         browserName: 'chromium',
-        channel: 'chrome',          // shows the headed Chrome you launched
         cdpEndpoint: '${cdpEndpoint}', // ← attach instead of launch
         headless: false,
         viewport: null,
