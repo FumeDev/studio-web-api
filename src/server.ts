@@ -2614,6 +2614,7 @@ app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
     } catch (err) {
       console.warn("Could not derive CDP endpoint, using default", cdpEndpoint);
     }
+    console.log("CDP Endpoint:", cdpEndpoint);
 
     // --- Temporary Playwright config that attaches to the existing browser ---
     const tempConfigContent = `
@@ -2623,12 +2624,20 @@ module.exports = defineConfig({
   retries: 0,
   reporter: 'list',
   testIgnore: ['**/stagehand/**'],
-  use: {
-    // Attach instead of launching a new browser
-    connectOverCDP: '${cdpEndpoint}',
-    headless: false,
-    viewport: null,
-  },
+
+  projects: [
+    {
+      name: 'chrome-cdp',
+      use: {
+        browserName: 'chromium',
+        channel: 'chrome',          // shows the headed Chrome you launched
+        cdpEndpoint: '${cdpEndpoint}', // ← attach instead of launch
+        headless: false,
+        viewport: null,
+        reuseExistingContext: true  // Playwright 1.42+ (optional but handy)
+      }
+    }
+  ]
 });
 `;
     
