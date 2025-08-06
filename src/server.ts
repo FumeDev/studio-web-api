@@ -2555,8 +2555,8 @@ app.post("/run-playwright", async (req: Request, res: Response) => {
 
 app.post("/run-tmp-playwright", async (req: Request, res: Response) => {
   try {
-    // Allow long-running Playwright tests (up to 2 hours)
-    res.setTimeout(2 * 60 * 60 * 1000);
+    // Allow long-running Playwright tests (up to 30 minutes)
+    res.setTimeout(30 * 60 * 1000);
     
     // Get test code and file path from request body
     const { testCode, filePath } = req.body;
@@ -2610,6 +2610,7 @@ const config: PlaywrightTestConfig = {
   retries: 0,
   reporter: 'list',
   testIgnore: ['**/stagehand/**'],
+  timeout: 30 * 60 * 1000, // 30 minutes per test
 
   projects: [
     {
@@ -2653,8 +2654,8 @@ export default config;
       }
     );
 
-    // Wait for the Playwright run to finish but enforce a hard 2-hour limit
-    const timeoutMs = 2 * 60 * 60 * 1000; // 2 hours
+    // Wait for the Playwright run to finish but enforce a hard 30-minute limit
+    const timeoutMs = 30 * 60 * 1000; // 30 minutes
     const result = await Promise.race([
       cmdPromise,
       new Promise<never>((_, reject) =>
