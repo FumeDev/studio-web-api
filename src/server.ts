@@ -3214,6 +3214,17 @@ wss.on('connection', (ws: WebSocket, req: any) => {
   
   cdpStreamClients.set(clientId, client);
   
+  // Recorder state per connection
+  const recorderState: {
+    isRecording: boolean;
+    isInspectMode: boolean;
+    lastMouseDown: null | { x: number; y: number; time: number; selector: string | null; button?: string; clickCount?: number; before?: string };
+  } = {
+    isRecording: false,
+    isInspectMode: false,
+    lastMouseDown: null
+  };
+  
   ws.on('message', async (data) => {
     try {
       const message = JSON.parse(data.toString());
@@ -3270,6 +3281,52 @@ wss.on('connection', (ws: WebSocket, req: any) => {
           }
           break;
           
+        case 'start-recording': {
+          recorderState.isRecording = true;
+          ws.send(JSON.stringify({ type: 'recording', status: 'started' }));
+          break;
+        }
+        case 'stop-recording': {
+          recorderState.isRecording = false;
+          recorderState.lastMouseDown = null;
+          ws.send(JSON.stringify({ type: 'recording', status: 'stopped' }));
+          break;
+        }
+        case 'set-inspect': {
+          try {
+            const enable = !!message.enable;
+            recorderState.isInspectMode = enable;
+            const cdp = await getCDPClient();
+            await ensureDOMAndOverlayEnabled(cdp);
+            if (enable) {
+              cdp.on && cdp.on('Overlay.inspectNodeRequested', async (params: any) => {
+                try {
+                  const nodeId = params.nodeId as number;
+                  const selector = await computeSelectorForNodeId(nodeId);
+                  if (selector) {
+                    await highlightNode(nodeId);
+                    ws.send(JSON.stringify({ type: 'inspected-node', selector, nodeId }));
+                  }
+                } catch {}
+              });
+              await cdp.send('Overlay.setInspectMode', {
+                mode: 'searchForNode',
+                highlightConfig: {
+                  showInfo: true,
+                  contentColor: { r: 111, g: 168, b: 220, a: 0.24 },
+                  borderColor: { r: 255, g: 229, b: 153, a: 0.66 }
+                }
+              });
+            } else {
+              await cdp.send('Overlay.setInspectMode', { mode: 'none' });
+              await cdp.send('Overlay.hideHighlight');
+            }
+            ws.send(JSON.stringify({ type: 'inspect', enabled: enable }));
+          } catch (e) {
+            ws.send(JSON.stringify({ type: 'error', message: `Failed to set inspect mode: ${e}` }));
+          }
+          break;
+        }
         case 'input':
           // Handle input events
           try {
@@ -3278,6 +3335,88 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               type: 'input-ack',
               inputType: message.inputType
             }));
+            
+            // Recorder: emit actions while recording
+            if (recorderState.isRecording) {
+              const inputType = message.inputType as string;
+              const params = message.params || {};
+              // Mouse down: save start
+              if (inputType === 'mouseDown') {
+                const nodeId = await getNodeForLocation(params.x, params.y);
+                const selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
+                recorderState.lastMouseDown = {
+                  x: params.x,
+                  y: params.y,
+                  time: Date.now(),
+                  selector,
+                  button: params.button || 'left',
+                  clickCount: params.clickCount || 1,
+                  before: lastCDPFrame?.data
+                };
+              }
+              // Mouse up: click/doubleclick/drag
+              if (inputType === 'mouseUp' && recorderState.lastMouseDown) {
+                const down = recorderState.lastMouseDown;
+                const moved = Math.hypot(params.x - down.x, params.y - down.y) > 4;
+                const nodeUpId = await getNodeForLocation(params.x, params.y);
+                const upSelector = nodeUpId ? await computeSelectorForNodeId(nodeUpId) : null;
+                const after = lastCDPFrame?.data;
+                if (!moved) {
+                  const isDouble = (down.clickCount || 1) >= 2 && (down.button === 'left');
+                  ws.send(JSON.stringify({
+                    type: 'recorded-action',
+                    action: isDouble ? 'doubleclick' : 'click',
+                    selector: upSelector || down.selector,
+                    x: params.x,
+                    y: params.y,
+                    button: down.button,
+                    before: down.before,
+                    after
+                  }));
+                } else {
+                  ws.send(JSON.stringify({
+                    type: 'recorded-action',
+                    action: 'drag',
+                    from: { selector: down.selector, x: down.x, y: down.y },
+                    to: { selector: upSelector, x: params.x, y: params.y },
+                    before: down.before,
+                    after
+                  }));
+                }
+                recorderState.lastMouseDown = null;
+              }
+              // Wheel: simple per-event record
+              if (inputType === 'mouseWheel') {
+                const nodeId = await getNodeForLocation(params.x, params.y);
+                const selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
+                ws.send(JSON.stringify({
+                  type: 'recorded-action',
+                  action: 'scroll',
+                  selector,
+                  deltaX: params.deltaX || 0,
+                  deltaY: params.deltaY || 0,
+                  before: lastCDPFrame?.data,
+                  after: lastCDPFrame?.data
+                }));
+              }
+              // Key typing: record printable and specials as discrete events
+              if (inputType === 'keyDown') {
+                const text: string | undefined = typeof params.text === 'string' ? params.text : undefined;
+                const isPrintable = !!text && text.length === 1;
+                const isSpecial = ['Enter','Tab','Backspace','Delete','Escape'].includes(params.key);
+                if (isPrintable || isSpecial) {
+                  const focusedSel = await getFocusedSelector();
+                  ws.send(JSON.stringify({
+                    type: 'recorded-action',
+                    action: 'type',
+                    selector: focusedSel,
+                    text: isPrintable ? text : `{${params.key}}`,
+                    before: lastCDPFrame?.data,
+                    after: lastCDPFrame?.data
+                  }));
+                }
+              }
+            }
           } catch (error) {
             console.error(`Input injection error for ${clientId}:`, error);
             ws.send(JSON.stringify({
