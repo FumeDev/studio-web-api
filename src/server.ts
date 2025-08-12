@@ -3104,10 +3104,10 @@ async function createVideoTrackFromBrowser(peerConnection: any): Promise<any> {
         // Now use the cached expected buffer size
         if (cachedExpectedBytes !== null) {
           // Try RGBA first, then YUV if needed
-          let frameData = rgbaData;
+          let frameData: Uint8Array = rgbaData as unknown as Uint8Array;
           if (cachedExpectedBytes !== rgbaData.byteLength) {
             // Convert to YUV if RGBA size doesn't match
-            frameData = rgbaToYuv420(rgbaData, targetWidth, targetHeight);
+            frameData = rgbaToYuv420(rgbaData, targetWidth, targetHeight) as unknown as Uint8Array;
           }
           
           // Create a buffer of exactly the expected size
@@ -3694,6 +3694,97 @@ async function injectCDPInput(type: string, params: any) {
     console.error('Input params:', JSON.stringify(params, null, 2));
     throw error;
   }
+}
+
+// --- CDP helpers for recorder and inspect mode ---
+async function getCDPClient() {
+  if (!stagehand?.page) throw new Error('Browser page not available');
+  if (!cdpSessionId) {
+    cdpSessionId = await stagehand.page.context().newCDPSession(stagehand.page);
+  }
+  return cdpSessionId;
+}
+
+async function ensureDOMAndOverlayEnabled(client: any) {
+  try { await client.send('DOM.enable'); } catch {}
+  try { await client.send('Overlay.enable'); } catch {}
+}
+
+async function getNodeForLocation(x: number, y: number) {
+  const client = await getCDPClient();
+  await ensureDOMAndOverlayEnabled(client);
+  const result = await client.send('DOM.getNodeForLocation', {
+    x,
+    y,
+    includeUserAgentShadowDOM: true,
+    ignorePointerEventsNone: false
+  });
+  return result?.nodeId as number | undefined;
+}
+
+async function resolveObjectIdForNodeId(nodeId: number) {
+  const client = await getCDPClient();
+  const { object } = await client.send('DOM.resolveNode', { nodeId });
+  return object?.objectId as string | undefined;
+}
+
+// Compute a robust CSS selector in-page for the given node
+async function computeSelectorForNodeId(nodeId: number): Promise<string | null> {
+  const objectId = await resolveObjectIdForNodeId(nodeId);
+  if (!objectId) return null;
+  const client = await getCDPClient();
+  const { result } = await client.send('Runtime.callFunctionOn', {
+    objectId,
+    functionDeclaration: "function() {\n      var el = this;\n      if (!el || el.nodeType !== 1) return null;\n      var getAttr = function(n){ return el.getAttribute(n); };\n      var testid = getAttr('data-testid') || getAttr('data-test-id') || getAttr('data-test');\n      if (testid) return '[data-testid=\"' + testid + '\"]';\n      if (el.id) return '#' + el.id;\n      var parts = [];\n      var node = el;\n      var depth = 0;\n      while (node && depth < 5 && node.nodeType === 1 && node.tagName.toLowerCase() !== 'html') {\n        var part = node.tagName.toLowerCase();\n        var nth = 1;\n        var sib = node.previousElementSibling;\n        while (sib) { if (sib.tagName === node.tagName) nth++; sib = sib.previousElementSibling; }\n        parts.unshift(part + ':nth-of-type(' + nth + ')');\n        node = node.parentElement;\n        depth++;\n      }\n      return parts.join(' > ');\n    }",
+    returnByValue: true
+  });
+  return (result && result.value) || null;
+}
+
+async function highlightNode(nodeId: number) {
+  try {
+    const client = await getCDPClient();
+    await ensureDOMAndOverlayEnabled(client);
+    await client.send('Overlay.highlightNode', {
+      highlightConfig: {
+        showInfo: true,
+        contentColor: { r: 111, g: 168, b: 220, a: 0.24 },
+        paddingColor: { r: 246, g: 178, b: 107, a: 0.66 },
+        borderColor: { r: 255, g: 229, b: 153, a: 0.66 },
+        marginColor: { r: 255, g: 155, b: 155, a: 0.66 }
+      },
+      nodeId
+    });
+  } catch {}
+}
+
+// Get currently focused element selector (fallback for typing)
+async function getFocusedSelector(): Promise<string | null> {
+  if (!stagehand?.page) return null;
+  try {
+    const selector = await stagehand.page.evaluate(() => {
+      const el = document.activeElement as Element | null;
+      if (!el) return null;
+      const cssEscape = (window as any).CSS && (window as any).CSS.escape ? (window as any).CSS.escape : ((s: string) => s.replace(/[^a-zA-Z0-9_-]/g, (r: string) => '\\' + r));
+      const attr = (n: string) => el.getAttribute(n);
+      const testid = attr('data-testid') || attr('data-test-id') || attr('data-test');
+      if (testid) return `[data-testid="${cssEscape(testid)}"]`;
+      if ((el as HTMLElement).id) return `#${cssEscape((el as HTMLElement).id)}`;
+      // Fallback simple path
+      const parts: string[] = [];
+      let node: Element | null = el;
+      let depth = 0;
+      while (node && depth < 5 && node.tagName.toLowerCase() !== 'html') {
+        let part = node.tagName.toLowerCase();
+        let nth = 1; let sib = node.previousElementSibling;
+        while (sib) { if (sib.tagName === node.tagName) nth++; sib = sib.previousElementSibling; }
+        parts.unshift(part + `:nth-of-type(${nth})`);
+        node = node.parentElement; depth++;
+      }
+      return parts.join(' > ');
+    });
+    return selector;
+  } catch { return null; }
 }
 
 server.listen(PORT, () => {
