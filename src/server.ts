@@ -3368,7 +3368,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 if (!selector) {
                   const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
                   logSelectorDebug('mouseDown-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
-                  logSelectorCandidates('mouseDown-candidates', { cssX, cssY, boundedX, boundedY, candidates: selRes.candidates, chosen: null, promotedTag: selRes.promotedTag, actionableTag: selRes.actionableTag });
+                  logSelectorCandidates('mouseDown-candidates', { cssX, cssY, boundedX, boundedY, candidates: selRes.candidates, chosen: null, promotedTag: selRes.promotedTag, actionableTag: selRes.actionableTag, evalError: selRes.evalError || null });
                 }
                 recorderState.lastMouseDown = {
                   x: boundedX,
@@ -3399,7 +3399,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 if (!upSelector) {
                   const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
                   logSelectorDebug('mouseUp-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
-                  logSelectorCandidates('mouseUp-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResUp.candidates, chosen: null, promotedTag: selResUp.promotedTag, actionableTag: selResUp.actionableTag });
+                  logSelectorCandidates('mouseUp-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResUp.candidates, chosen: null, promotedTag: selResUp.promotedTag, actionableTag: selResUp.actionableTag, evalError: selResUp.evalError || null });
                 }
                 const after = lastCDPFrame?.data;
                 if (!moved) {
@@ -3445,7 +3445,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   if (!selector) {
                     const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
                     logSelectorDebug('wheel-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
-                    logSelectorCandidates('wheel-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResScroll.candidates, chosen: null, promotedTag: selResScroll.promotedTag, actionableTag: selResScroll.actionableTag });
+                    logSelectorCandidates('wheel-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResScroll.candidates, chosen: null, promotedTag: selResScroll.promotedTag, actionableTag: selResScroll.actionableTag, evalError: selResScroll.evalError || null });
                   }
                 }
                 if (!recorderState.scroll) {
@@ -3931,19 +3931,23 @@ async function getElementSnapshotAtPoint(x: number, y: number): Promise<any> {
   if (!stagehand?.page) return null;
   try {
     return await stagehand.page.evaluate(({ x, y }) => {
+      const dpr = window.devicePixelRatio || 1;
       const el = document.elementFromPoint(x, y) as Element | null;
-      if (!el) return { exists: false };
+      if (!el) return { exists: false, dpr };
+      const rect = (el as HTMLElement).getBoundingClientRect();
       const snapshot: any = {
         exists: true,
+        dpr,
         tag: el.tagName.toLowerCase(),
         id: (el as HTMLElement).id || null,
         className: (el as HTMLElement).className || null,
         role: el.getAttribute('role') || null,
         attrs: {},
+        rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height },
+        outerHTML: (el as HTMLElement).outerHTML?.slice(0, 200) || null
       };
       const attrs = ['data-testid','data-test','data-cy','data-automation-id','data-qa','data-test-id','aria-label','name','placeholder','type','for'];
       attrs.forEach(a => { const v = el.getAttribute(a); if (v) (snapshot.attrs as any)[a] = v; });
-      // Shallow ancestor tags
       const ancestors: string[] = [];
       let cur: Element | null = el.parentElement;
       let depth = 0;
@@ -3976,7 +3980,7 @@ function logSelectorDebug(context: string, params: { cssX: number; cssY: number;
   console.log('[SelectorDebug]', JSON.stringify(info));
 }
 
-function logSelectorCandidates(context: string, params: { cssX: number; cssY: number; boundedX: number; boundedY: number; candidates: string[]; chosen?: string | null; promotedTag?: string | null; actionableTag?: string | null; }) {
+function logSelectorCandidates(context: string, params: { cssX: number; cssY: number; boundedX: number; boundedY: number; candidates: string[]; chosen?: string | null; promotedTag?: string | null; actionableTag?: string | null; evalError?: string | null; }) {
   const info = {
     context,
     cssX: params.cssX,
@@ -3986,41 +3990,34 @@ function logSelectorCandidates(context: string, params: { cssX: number; cssY: nu
     chosen: params.chosen || null,
     promotedTag: params.promotedTag || null,
     actionableTag: params.actionableTag || null,
-    candidates: params.candidates.slice(0, 20) // cap to avoid huge logs
+    evalError: params.evalError || null,
+    candidates: params.candidates.slice(0, 20)
   };
   console.log('[SelectorCandidates]', JSON.stringify(info));
 }
 
-// Robust selector generation using in-page heuristics at screen coordinates
-async function generateSelectorAtPointWithDebug(x: number, y: number): Promise<{ selector: string | null, candidates: string[], promotedTag: string | null, actionableTag: string | null }> {
-  if (!stagehand?.page) return { selector: null, candidates: [], promotedTag: null, actionableTag: null };
+// Robust selector generation using in-page heuristics with debug
+async function generateSelectorAtPointWithDebug(x: number, y: number): Promise<{ selector: string | null, candidates: string[], promotedTag: string | null, actionableTag: string | null, evalError?: string | null }> {
+  if (!stagehand?.page) return { selector: null, candidates: [], promotedTag: null, actionableTag: null, evalError: 'no-page' };
   try {
     return await stagehand.page.evaluate(({ x, y }) => {
       const startTime = Date.now();
       const TIMEOUT_MS = 200;
       const isTimedOut = () => Date.now() - startTime > TIMEOUT_MS;
-
       const uniq = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
-
       const cssEscape = (str: string): string => {
         if (!str) return str;
         let escaped = (window as any).CSS && (window as any).CSS.escape ? (window as any).CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, (r) => '\\' + r);
         escaped = escaped.replace(/\\([0-9a-f]+)\s+(-)/gi, "\\$1$2");
         return escaped;
       };
-
       const isAcceptable = (sel: string, el: Element) => {
         if (!sel) return false;
-        try {
-          const list = document.querySelectorAll(sel);
-          if (list.length === 1 && list[0] === el) return true;
-        } catch {}
+        try { const list = document.querySelectorAll(sel); if (list.length === 1 && list[0] === el) return true; } catch {}
         try { return el.matches(sel); } catch { return false; }
       };
-
       const getActionableAncestor = (el: Element): Element | null => {
-        let cur: Element | null = el;
-        let depth = 0;
+        let cur: Element | null = el; let depth = 0;
         while (cur && depth < 6) {
           const tag = cur.tagName.toLowerCase();
           const role = cur.getAttribute('role');
@@ -4028,139 +4025,75 @@ async function generateSelectorAtPointWithDebug(x: number, y: number): Promise<{
           const onclick = (cur as any).onclick;
           const style = window.getComputedStyle(cur as Element);
           const pointer = style ? style.cursor === 'pointer' : false;
-          if (
-            tag === 'button' || tag === 'a' || tag === 'label' || tag === 'input' || tag === 'textarea' || tag === 'select' ||
-            role === 'button' || (tabindex !== null && Number(tabindex) >= 0) || onclick || pointer
-          ) {
-            return cur;
-          }
-          cur = cur.parentElement;
-          depth++;
+          if (tag === 'button' || tag === 'a' || tag === 'label' || tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'button' || (tabindex !== null && Number(tabindex) >= 0) || onclick || pointer) return cur;
+          cur = cur.parentElement; depth++;
         }
         return null;
       };
-
-      // Promote SVG/path to nearest non-SVG ancestor
       const promoteFromSVG = (el: Element): { element: Element, promotedTag: string | null } => {
         let cur: Element = el;
-        while (cur && ['path','svg','g','use'].includes(cur.tagName.toLowerCase())) {
-          if (!cur.parentElement) break;
-          cur = cur.parentElement;
-        }
+        while (cur && ['path','svg','g','use'].includes(cur.tagName.toLowerCase())) { if (!cur.parentElement) break; cur = cur.parentElement; }
         return { element: cur, promotedTag: cur.tagName.toLowerCase() };
       };
-
       const buildCandidates = (el: Element): string[] => {
-        const cands: string[] = [];
-        const tag = el.tagName.toLowerCase();
-        // test attrs
+        const cands: string[] = []; const tag = el.tagName.toLowerCase();
         const testAttrs = ['data-testid','data-test','data-cy','data-automation-id','data-qa','data-test-id'];
-        for (const a of testAttrs) {
-          const v = el.getAttribute(a);
-          if (v) { cands.push(`[${a}="${cssEscape(v)}"]`, `${tag}[${a}="${cssEscape(v)}"]`); }
-        }
-        // id
-        const id = (el as HTMLElement).id;
-        if (id) cands.push(`#${cssEscape(id)}`);
-        // role + aria-label
-        const role = el.getAttribute('role');
-        const aria = el.getAttribute('aria-label');
+        for (const a of testAttrs) { const v = el.getAttribute(a); if (v) { cands.push(`[${a}="${cssEscape(v)}"]`, `${tag}[${a}="${cssEscape(v)}"]`); } }
+        const id = (el as HTMLElement).id; if (id) cands.push(`#${cssEscape(id)}`);
+        const role = el.getAttribute('role'); const aria = el.getAttribute('aria-label');
         if (aria) cands.push(`[role="${role || tag}"][aria-label="${cssEscape(aria)}"]`, `${tag}[aria-label="${cssEscape(aria)}"]`);
-        // form attrs
-        const nameAttr = el.getAttribute('name');
-        if (nameAttr) cands.push(`${tag}[name="${cssEscape(nameAttr)}"]`);
-        const placeholder = el.getAttribute('placeholder');
-        if (placeholder) cands.push(`${tag}[placeholder="${cssEscape(placeholder)}"]`);
-        const typeAttr = el.getAttribute('type');
-        if (typeAttr) cands.push(`${tag}[type="${cssEscape(typeAttr)}"]`);
-        const forAttr = el.getAttribute('for');
-        if (forAttr) cands.push(`${tag}[for="${cssEscape(forAttr)}"]`);
-        // aria attrs
+        const nameAttr = el.getAttribute('name'); if (nameAttr) cands.push(`${tag}[name="${cssEscape(nameAttr)}"]`);
+        const placeholder = el.getAttribute('placeholder'); if (placeholder) cands.push(`${tag}[placeholder="${cssEscape(placeholder)}"]`);
+        const typeAttr = el.getAttribute('type'); if (typeAttr) cands.push(`${tag}[type="${cssEscape(typeAttr)}"]`);
+        const forAttr = el.getAttribute('for'); if (forAttr) cands.push(`${tag}[for="${cssEscape(forAttr)}"]`);
         const ariaAttrs = ['aria-labelledby','aria-describedby','aria-controls','aria-expanded','aria-selected'];
-        for (const a of ariaAttrs) {
-          const v = el.getAttribute(a);
-          if (v) cands.push(`${tag}[${a}="${cssEscape(v)}"]`);
-        }
-        // classes
-        const cls = (el as HTMLElement).className;
-        if (cls && typeof cls === 'string') {
-          const classes = cls.split(/\s+/).filter(Boolean);
-          if (classes.length) {
-            const max = Math.min(classes.length, 2);
-            for (let i = 0; i < max; i++) {
-              const seg = classes.slice(0, i+1).map(cssEscape).join('.');
-              cands.push(`${tag}.${seg}`);
-            }
-          }
-        }
-        // nth-of-type
-        if (el.parentElement) {
-          const siblings = Array.from(el.parentElement.children).filter(n => n.tagName === el.tagName);
-          const idx = siblings.indexOf(el) + 1;
-          cands.push(`${tag}:nth-of-type(${idx})`);
-        }
+        for (const a of ariaAttrs) { const v = el.getAttribute(a); if (v) cands.push(`${tag}[${a}="${cssEscape(v)}"]`); }
+        const cls = (el as HTMLElement).className; if (cls && typeof cls === 'string') { const classes = cls.split(/\s+/).filter(Boolean); if (classes.length) { const max = Math.min(classes.length, 2); for (let i=0;i<max;i++){ const seg = classes.slice(0,i+1).map(cssEscape).join('.'); cands.push(`${tag}.${seg}`); } } }
+        if (el.parentElement) { const siblings = Array.from(el.parentElement.children).filter(n => n.tagName === el.tagName); const idx = siblings.indexOf(el) + 1; cands.push(`${tag}:nth-of-type(${idx})`); }
         return uniq(cands);
       };
-
       const result = { selector: null as string | null, candidates: [] as string[], promotedTag: null as string | null, actionableTag: null as string | null };
-
-      const baseEl = document.elementFromPoint(x, y) as Element | null;
-      if (!baseEl) return result;
-
-      // Promote from svg/path
-      const { element: nonSvgEl, promotedTag } = promoteFromSVG(baseEl);
-      result.promotedTag = promotedTag;
-
-      // Prefer actionable ancestor when present
-      const actionable = getActionableAncestor(nonSvgEl) || nonSvgEl;
-      result.actionableTag = actionable.tagName.toLowerCase();
-
-      // Try direct candidates
-      const directCands = buildCandidates(actionable);
-      for (const sel of directCands) {
-        if (isAcceptable(sel, actionable)) { result.selector = sel; result.candidates = directCands; return result; }
-      }
-
-      // Try ancestor + leaf combinations
-      let current: Element | null = actionable.parentElement;
-      let depth = 0;
+      const baseEl = document.elementFromPoint(x, y) as Element | null; if (!baseEl) return result;
+      const { element: nonSvgEl, promotedTag } = promoteFromSVG(baseEl); result.promotedTag = promotedTag;
+      const actionable = getActionableAncestor(nonSvgEl) || nonSvgEl; result.actionableTag = actionable.tagName.toLowerCase();
+      const directCands = buildCandidates(actionable); for (const sel of directCands) { if (isAcceptable(sel, actionable)) { result.selector = sel; result.candidates = directCands; return result; } }
+      let current: Element | null = actionable.parentElement; let depth = 0;
       while (current && current !== document.body && depth < 6 && !isTimedOut()) {
-        const ancCands = buildCandidates(current);
-        const leafCands = buildCandidates(actionable);
-        for (const a of ancCands) {
-          for (const l of leafCands) {
-            const combined = `${a} ${l}`;
-            if (isAcceptable(combined, actionable)) { result.selector = combined; result.candidates = [...ancCands, ...leafCands]; return result; }
-          }
-        }
-        current = current.parentElement;
-        depth++;
+        const ancCands = buildCandidates(current); const leafCands = buildCandidates(actionable);
+        for (const a of ancCands) { for (const l of leafCands) { const combined = `${a} ${l}`; if (isAcceptable(combined, actionable)) { result.selector = combined; result.candidates = [...ancCands, ...leafCands]; return result; } } }
+        current = current.parentElement; depth++;
       }
-
-      // Try path upwards
-      let node: Element | null = actionable;
-      const path: string[] = [];
+      let node: Element | null = actionable; const path: string[] = [];
       while (node && node !== document.body && path.length < 8 && !isTimedOut()) {
-        if (node.parentElement) {
-          const sibs = Array.from(node.parentElement.children).filter(n => n.tagName === node!.tagName);
-          const idx = sibs.indexOf(node) + 1;
-          path.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${idx})`);
-          const test = path.join(' > ');
-          if (isAcceptable(test, actionable)) { result.selector = test; return result; }
-        }
+        if (node.parentElement) { const sibs = Array.from(node.parentElement.children).filter(n => n.tagName === node!.tagName); const idx = sibs.indexOf(node) + 1; path.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${idx})`); const test = path.join(' > '); if (isAcceptable(test, actionable)) { result.selector = test; return result; } }
         node = node.parentElement;
       }
-
       return result;
     }, { x, y });
-  } catch {
-    return { selector: null, candidates: [], promotedTag: null, actionableTag: null };
+  } catch (e) {
+    return { selector: null, candidates: [], promotedTag: null, actionableTag: null, evalError: (e as Error).message };
   }
 }
 
 async function generateSelectorAtPoint(x: number, y: number): Promise<string | null> {
   const res = await generateSelectorAtPointWithDebug(x, y);
   return res.selector;
+}
+
+async function generateSelectorAtPointWithRetry(x: number, y: number, attempts = 3): Promise<{ selector: string | null, meta?: any }> {
+  let lastErr: string | null = null;
+  for (let i = 0; i < attempts; i++) {
+    const res = await generateSelectorAtPointWithDebug(x, y);
+    if (res.selector) return { selector: res.selector };
+    if (res.evalError) {
+      lastErr = res.evalError;
+      console.log('[SelectorEvalError]', JSON.stringify({ attempt: i+1, error: res.evalError }));
+      await new Promise(r => setTimeout(r, 100));
+      continue;
+    }
+    return { selector: res.selector };
+  }
+  return { selector: null, meta: { lastError: lastErr } };
 }
 
 async function highlightNode(nodeId: number) {
