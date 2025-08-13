@@ -3363,10 +3363,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 const boundedY = (meta && typeof meta.deviceHeight === 'number')
                   ? Math.max(0, Math.min(cssY, meta.deviceHeight))
                   : cssY;
-                const selector = await generateSelectorAtPoint(boundedX, boundedY);
+                const selRes = await generateSelectorAtPointWithDebug(boundedX, boundedY);
+                const selector = selRes.selector;
                 if (!selector) {
                   const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
                   logSelectorDebug('mouseDown-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
+                  logSelectorCandidates('mouseDown-candidates', { cssX, cssY, boundedX, boundedY, candidates: selRes.candidates, chosen: null, promotedTag: selRes.promotedTag, actionableTag: selRes.actionableTag });
                 }
                 recorderState.lastMouseDown = {
                   x: boundedX,
@@ -3392,10 +3394,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   ? Math.max(0, Math.min(cssY, meta.deviceHeight))
                   : cssY;
                 const moved = Math.hypot(boundedX - down.x, boundedY - down.y) > 4;
-                const upSelector = await generateSelectorAtPoint(boundedX, boundedY);
+                const selResUp = await generateSelectorAtPointWithDebug(boundedX, boundedY);
+                const upSelector = selResUp.selector;
                 if (!upSelector) {
                   const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
                   logSelectorDebug('mouseUp-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
+                  logSelectorCandidates('mouseUp-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResUp.candidates, chosen: null, promotedTag: selResUp.promotedTag, actionableTag: selResUp.actionableTag });
                 }
                 const after = lastCDPFrame?.data;
                 if (!moved) {
@@ -3435,10 +3439,14 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   ? Math.max(0, Math.min(cssY, meta.deviceHeight))
                   : cssY;
                 let selector: string | null = recorderState.scroll?.selector || null;
-                if (!selector) selector = await generateSelectorAtPoint(boundedX, boundedY);
                 if (!selector) {
-                  const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
-                  logSelectorDebug('wheel-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
+                  const selResScroll = await generateSelectorAtPointWithDebug(boundedX, boundedY);
+                  selector = selResScroll.selector;
+                  if (!selector) {
+                    const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
+                    logSelectorDebug('wheel-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
+                    logSelectorCandidates('wheel-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResScroll.candidates, chosen: null, promotedTag: selResScroll.promotedTag, actionableTag: selResScroll.actionableTag });
+                  }
                 }
                 if (!recorderState.scroll) {
                   recorderState.scroll = {
@@ -3968,16 +3976,40 @@ function logSelectorDebug(context: string, params: { cssX: number; cssY: number;
   console.log('[SelectorDebug]', JSON.stringify(info));
 }
 
+function logSelectorCandidates(context: string, params: { cssX: number; cssY: number; boundedX: number; boundedY: number; candidates: string[]; chosen?: string | null; promotedTag?: string | null; actionableTag?: string | null; }) {
+  const info = {
+    context,
+    cssX: params.cssX,
+    cssY: params.cssY,
+    boundedX: params.boundedX,
+    boundedY: params.boundedY,
+    chosen: params.chosen || null,
+    promotedTag: params.promotedTag || null,
+    actionableTag: params.actionableTag || null,
+    candidates: params.candidates.slice(0, 20) // cap to avoid huge logs
+  };
+  console.log('[SelectorCandidates]', JSON.stringify(info));
+}
+
 // Robust selector generation using in-page heuristics at screen coordinates
-async function generateSelectorAtPoint(x: number, y: number): Promise<string | null> {
-  if (!stagehand?.page) return null;
+async function generateSelectorAtPointWithDebug(x: number, y: number): Promise<{ selector: string | null, candidates: string[], promotedTag: string | null, actionableTag: string | null }> {
+  if (!stagehand?.page) return { selector: null, candidates: [], promotedTag: null, actionableTag: null };
   try {
     return await stagehand.page.evaluate(({ x, y }) => {
       const startTime = Date.now();
       const TIMEOUT_MS = 200;
       const isTimedOut = () => Date.now() - startTime > TIMEOUT_MS;
 
-      const isSelectorAcceptable = (sel: string, el: Element) => {
+      const uniq = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
+
+      const cssEscape = (str: string): string => {
+        if (!str) return str;
+        let escaped = (window as any).CSS && (window as any).CSS.escape ? (window as any).CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, (r) => '\\' + r);
+        escaped = escaped.replace(/\\([0-9a-f]+)\s+(-)/gi, "\\$1$2");
+        return escaped;
+      };
+
+      const isAcceptable = (sel: string, el: Element) => {
         if (!sel) return false;
         try {
           const list = document.querySelectorAll(sel);
@@ -3986,170 +4018,149 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
         try { return el.matches(sel); } catch { return false; }
       };
 
-      const isSelectorUnique = (sel: string, el: Element) => isSelectorAcceptable(sel, el);
-
-      const cssEscape = (str: string): string => {
-        if (!str) return str;
-        let escaped = (window as any).CSS && (window as any).CSS.escape ? (window as any).CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, (r) => '\\' + r);
-        // Fix numeric-start space issue from CSS.escape
-        escaped = escaped.replace(/\\([0-9a-f]+)\s+(-)/gi, "\\$1$2");
-        return escaped;
-      };
-
-      const isLikelyDynamicId = (id: string) =>
-        !!id && (id.includes(':') || /^radix-/.test(id) || /^[A-Za-z]+-[0-9a-f]{6,}$/.test(id) || /^[0-9a-f-]{8,}$/.test(id));
-
-      const isLikelyDynamicClass = (cls: string) =>
-        !!cls && (cls.includes(':') || (/^[a-z0-9]+$/.test(cls) && cls.length > 15) || /\d{2,}/.test(cls) || /^css-[a-f0-9]{6,}$/i.test(cls));
-
-      const getAccessibleName = (el: Element): string | null => {
-        const aria = el.getAttribute('aria-label');
-        if (aria) return aria;
-        const txt = el.textContent?.trim();
-        return txt && txt.length < 50 ? txt : null;
-      };
-
-      const buildElementSelector = (el: Element, forbidAncestor = false): string | null => {
-        if (isTimedOut()) return null;
-        // 1) data-test attrs
-        const testAttrs = ['data-testid','data-test','data-cy','data-automation-id','data-qa','data-test-id'];
-        for (const a of testAttrs) {
-          const v = el.getAttribute(a);
-          if (v) {
-            const sel = `[${a}="${cssEscape(v)}"]`;
-            return sel;
+      const getActionableAncestor = (el: Element): Element | null => {
+        let cur: Element | null = el;
+        let depth = 0;
+        while (cur && depth < 6) {
+          const tag = cur.tagName.toLowerCase();
+          const role = cur.getAttribute('role');
+          const tabindex = (cur as HTMLElement).getAttribute('tabindex');
+          const onclick = (cur as any).onclick;
+          const style = window.getComputedStyle(cur as Element);
+          const pointer = style ? style.cursor === 'pointer' : false;
+          if (
+            tag === 'button' || tag === 'a' || tag === 'label' || tag === 'input' || tag === 'textarea' || tag === 'select' ||
+            role === 'button' || (tabindex !== null && Number(tabindex) >= 0) || onclick || pointer
+          ) {
+            return cur;
           }
-        }
-        // 2) id (accept even if not globally unique)
-        if ((el as HTMLElement).id) {
-          const idSel = `#${cssEscape((el as HTMLElement).id)}`;
-          return idSel;
-        }
-        // 3) role + accessible name (accept)
-        const role = el.getAttribute('role') || el.tagName.toLowerCase();
-        const acc = getAccessibleName(el);
-        if (acc) {
-          const aria = el.getAttribute('aria-label');
-          if (aria) {
-            const sel = `[role="${role}"][aria-label="${cssEscape(aria)}"]`;
-            return sel;
-          }
-        }
-        // 4) form attrs (accept)
-        const formAttrs = ['name','placeholder','for','type'];
-        for (const a of formAttrs) {
-          const v = el.getAttribute(a);
-          if (v) {
-            const sel = `${el.tagName.toLowerCase()}[${a}="${cssEscape(v)}"]`;
-            return sel;
-          }
-        }
-        // 5) aria attrs (accept)
-        const ariaAttrs = ['aria-label','aria-labelledby','aria-describedby','aria-controls','aria-expanded','aria-selected'];
-        for (const a of ariaAttrs) {
-          const v = el.getAttribute(a);
-          if (v) {
-            const sel = `${el.tagName.toLowerCase()}[${a}="${cssEscape(v)}"]`;
-            return sel;
-          }
-        }
-        // 6) classes (accept up to 2)
-        if ((el as HTMLElement).className && typeof (el as HTMLElement).className === 'string') {
-          const classes = (el as HTMLElement).className.split(/\s+/).filter(Boolean);
-          if (classes.length > 0) {
-            const tag = el.tagName.toLowerCase();
-            const max = Math.min(classes.length, 2);
-            for (let i = 0; i < max; i++) {
-              const parts = classes.slice(0, i+1).map(cssEscape).join('.');
-              const sel = `${tag}.${parts}`;
-              return sel;
-            }
-          }
-        }
-        // 7) nth-of-type path up to limited depth
-        if (!forbidAncestor && el.parentElement) {
-          const siblings = Array.from(el.parentElement.children).filter(n => n.tagName === el.tagName);
-          const index = siblings.indexOf(el) + 1;
-          const nthSel = `${el.tagName.toLowerCase()}:nth-of-type(${index})`;
-          if (isSelectorUnique(nthSel, el)) return nthSel;
-        }
-        // 8) Try role + aria-label directly
-        const aria = el.getAttribute('aria-label');
-        if (aria) {
-          const roleSel = `[role="${(el.getAttribute('role') || el.tagName.toLowerCase())}"][aria-label="${cssEscape(aria)}"]`;
-          if (isSelectorUnique(roleSel, el)) return roleSel;
-        }
-        // 9) Try name attribute for inputs/textareas
-        if (el.tagName.toLowerCase() === 'input' || el.tagName.toLowerCase() === 'textarea') {
-          const nameAttr = el.getAttribute('name');
-          if (nameAttr) {
-            const nameSel = `${el.tagName.toLowerCase()}[name="${cssEscape(nameAttr)}"]`;
-            if (isSelectorUnique(nameSel, el)) return nameSel;
-          }
+          cur = cur.parentElement;
+          depth++;
         }
         return null;
       };
 
-      const el = document.elementFromPoint(x, y) as Element | null;
-      if (!el) return null;
-
-      // Strategy 1: direct selector
-      let direct = buildElementSelector(el);
-      if (!direct) {
-        // Special-case Google search box (combobox role/aria-label)
-        const aria = el.getAttribute('aria-label');
-        if (aria) {
-          const roleSel = `[role="${(el.getAttribute('role') || el.tagName.toLowerCase())}"][aria-label="${cssEscape(aria)}"]`;
-          if (isSelectorUnique(roleSel, el)) direct = roleSel;
+      // Promote SVG/path to nearest non-SVG ancestor
+      const promoteFromSVG = (el: Element): { element: Element, promotedTag: string | null } => {
+        let cur: Element = el;
+        while (cur && ['path','svg','g','use'].includes(cur.tagName.toLowerCase())) {
+          if (!cur.parentElement) break;
+          cur = cur.parentElement;
         }
-        if (!direct && (el.tagName.toLowerCase() === 'textarea' || el.tagName.toLowerCase() === 'input')) {
-          const nameAttr = el.getAttribute('name');
-          if (nameAttr) {
-            const nameSel = `${el.tagName.toLowerCase()}[name="${cssEscape(nameAttr)}"]`;
-            if (isSelectorUnique(nameSel, el)) direct = nameSel;
+        return { element: cur, promotedTag: cur.tagName.toLowerCase() };
+      };
+
+      const buildCandidates = (el: Element): string[] => {
+        const cands: string[] = [];
+        const tag = el.tagName.toLowerCase();
+        // test attrs
+        const testAttrs = ['data-testid','data-test','data-cy','data-automation-id','data-qa','data-test-id'];
+        for (const a of testAttrs) {
+          const v = el.getAttribute(a);
+          if (v) { cands.push(`[${a}="${cssEscape(v)}"]`, `${tag}[${a}="${cssEscape(v)}"]`); }
+        }
+        // id
+        const id = (el as HTMLElement).id;
+        if (id) cands.push(`#${cssEscape(id)}`);
+        // role + aria-label
+        const role = el.getAttribute('role');
+        const aria = el.getAttribute('aria-label');
+        if (aria) cands.push(`[role="${role || tag}"][aria-label="${cssEscape(aria)}"]`, `${tag}[aria-label="${cssEscape(aria)}"]`);
+        // form attrs
+        const nameAttr = el.getAttribute('name');
+        if (nameAttr) cands.push(`${tag}[name="${cssEscape(nameAttr)}"]`);
+        const placeholder = el.getAttribute('placeholder');
+        if (placeholder) cands.push(`${tag}[placeholder="${cssEscape(placeholder)}"]`);
+        const typeAttr = el.getAttribute('type');
+        if (typeAttr) cands.push(`${tag}[type="${cssEscape(typeAttr)}"]`);
+        const forAttr = el.getAttribute('for');
+        if (forAttr) cands.push(`${tag}[for="${cssEscape(forAttr)}"]`);
+        // aria attrs
+        const ariaAttrs = ['aria-labelledby','aria-describedby','aria-controls','aria-expanded','aria-selected'];
+        for (const a of ariaAttrs) {
+          const v = el.getAttribute(a);
+          if (v) cands.push(`${tag}[${a}="${cssEscape(v)}"]`);
+        }
+        // classes
+        const cls = (el as HTMLElement).className;
+        if (cls && typeof cls === 'string') {
+          const classes = cls.split(/\s+/).filter(Boolean);
+          if (classes.length) {
+            const max = Math.min(classes.length, 2);
+            for (let i = 0; i < max; i++) {
+              const seg = classes.slice(0, i+1).map(cssEscape).join('.');
+              cands.push(`${tag}.${seg}`);
+            }
           }
         }
-      }
-      if (direct) return direct;
+        // nth-of-type
+        if (el.parentElement) {
+          const siblings = Array.from(el.parentElement.children).filter(n => n.tagName === el.tagName);
+          const idx = siblings.indexOf(el) + 1;
+          cands.push(`${tag}:nth-of-type(${idx})`);
+        }
+        return uniq(cands);
+      };
 
-      // Strategy 2: climb ancestors to find stable, then relative path (allow non-unique leaf if combined matches target)
-      let current: Element | null = el.parentElement;
-      while (current && current !== document.body && !isTimedOut()) {
-        const anc = buildElementSelector(current);
-        if (anc) {
-          const leaf = buildElementSelector(el, true) || el.tagName.toLowerCase();
-          const combined = `${anc} ${leaf}`;
-          if (isSelectorAcceptable(combined, el)) return combined;
+      const result = { selector: null as string | null, candidates: [] as string[], promotedTag: null as string | null, actionableTag: null as string | null };
+
+      const baseEl = document.elementFromPoint(x, y) as Element | null;
+      if (!baseEl) return result;
+
+      // Promote from svg/path
+      const { element: nonSvgEl, promotedTag } = promoteFromSVG(baseEl);
+      result.promotedTag = promotedTag;
+
+      // Prefer actionable ancestor when present
+      const actionable = getActionableAncestor(nonSvgEl) || nonSvgEl;
+      result.actionableTag = actionable.tagName.toLowerCase();
+
+      // Try direct candidates
+      const directCands = buildCandidates(actionable);
+      for (const sel of directCands) {
+        if (isAcceptable(sel, actionable)) { result.selector = sel; result.candidates = directCands; return result; }
+      }
+
+      // Try ancestor + leaf combinations
+      let current: Element | null = actionable.parentElement;
+      let depth = 0;
+      while (current && current !== document.body && depth < 6 && !isTimedOut()) {
+        const ancCands = buildCandidates(current);
+        const leafCands = buildCandidates(actionable);
+        for (const a of ancCands) {
+          for (const l of leafCands) {
+            const combined = `${a} ${l}`;
+            if (isAcceptable(combined, actionable)) { result.selector = combined; result.candidates = [...ancCands, ...leafCands]; return result; }
+          }
         }
         current = current.parentElement;
-      }
-
-      // Strategy 3: CSS path with nth-of-type from leaf up to depth
-      const path: string[] = [];
-      let node: Element | null = el;
-      let depth = 0;
-      while (node && node !== document.body && depth < 10 && !isTimedOut()) {
-        if (node.parentElement) {
-          const sibs = Array.from(node.parentElement.children).filter(n => n.tagName === node!.tagName);
-          if (sibs.length === 1) {
-            path.unshift(node.tagName.toLowerCase());
-          } else {
-            const idx = sibs.indexOf(node) + 1;
-            path.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${idx})`);
-          }
-          const test = path.join(' > ');
-          if (isSelectorAcceptable(test, el)) return test;
-        }
-        node = node.parentElement;
         depth++;
       }
 
-      // Final fallback: click target tag
-      return el.tagName.toLowerCase();
+      // Try path upwards
+      let node: Element | null = actionable;
+      const path: string[] = [];
+      while (node && node !== document.body && path.length < 8 && !isTimedOut()) {
+        if (node.parentElement) {
+          const sibs = Array.from(node.parentElement.children).filter(n => n.tagName === node!.tagName);
+          const idx = sibs.indexOf(node) + 1;
+          path.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${idx})`);
+          const test = path.join(' > ');
+          if (isAcceptable(test, actionable)) { result.selector = test; return result; }
+        }
+        node = node.parentElement;
+      }
+
+      return result;
     }, { x, y });
   } catch {
-    return null;
+    return { selector: null, candidates: [], promotedTag: null, actionableTag: null };
   }
+}
+
+async function generateSelectorAtPoint(x: number, y: number): Promise<string | null> {
+  const res = await generateSelectorAtPointWithDebug(x, y);
+  return res.selector;
 }
 
 async function highlightNode(nodeId: number) {
