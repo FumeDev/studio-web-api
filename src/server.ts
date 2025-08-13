@@ -3304,12 +3304,21 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               cdp.on && cdp.on('Overlay.inspectNodeRequested', async (params: any) => {
                 try {
                   const nodeId = params.nodeId as number;
-                  const selector = await computeSelectorForNodeId(nodeId);
-                  if (selector) {
-                    await highlightNode(nodeId);
-                    ws.send(JSON.stringify({ type: 'inspected-node', selector, nodeId }));
+                  // Highlight as before
+                  await highlightNode(nodeId);
+                  // Compute selector by getting box and generating at its center
+                  let selector: string | null = null;
+                  try {
+                    const box = await cdp.send('DOM.getBoxModel', { nodeId });
+                    if (box && box.model && box.model.content && box.model.content.length >= 8) {
+                      const c = box.model.content; // [x1,y1,x2,y2,x3,y3,x4,y4]
+                      const cx = Math.round((c[0] + c[2] + c[4] + c[6]) / 4);
+                      const cy = Math.round((c[1] + c[3] + c[5] + c[7]) / 4);
+                      selector = await generateSelectorAtPoint(cx, cy);
                   }
-                } catch {}
+                  } catch {}
+                  ws.send(JSON.stringify({ type: 'inspected-node', selector, nodeId }));
+                } catch (e) { console.log('inspectNodeRequested handler error', e); }
               });
               await cdp.send('Overlay.setInspectMode', {
                 mode: 'searchForNode',
@@ -3351,11 +3360,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 const boundedY = (meta && typeof meta.deviceHeight === 'number')
                   ? Math.max(0, Math.min(params.y, meta.deviceHeight))
                   : params.y;
-                let selector: string | null = null;
-                try {
-                  const nodeId = await getNodeForLocation(boundedX, boundedY);
-                  selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
-                } catch {}
+                const selector = await generateSelectorAtPoint(boundedX, boundedY);
                 recorderState.lastMouseDown = {
                   x: boundedX,
                   y: boundedY,
@@ -3377,11 +3382,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   ? Math.max(0, Math.min(params.y, meta.deviceHeight))
                   : params.y;
                 const moved = Math.hypot(boundedX - down.x, boundedY - down.y) > 4;
-                let upSelector: string | null = null;
-                try {
-                  const nodeUpId = await getNodeForLocation(boundedX, boundedY);
-                  upSelector = nodeUpId ? await computeSelectorForNodeId(nodeUpId) : null;
-                } catch {}
+                const upSelector = await generateSelectorAtPoint(boundedX, boundedY);
                 const after = lastCDPFrame?.data;
                 if (!moved) {
                   const isDouble = (down.clickCount || 1) >= 2 && (down.button === 'left');
@@ -3417,12 +3418,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   ? Math.max(0, Math.min(params.y, meta.deviceHeight))
                   : params.y;
                 let selector: string | null = recorderState.scroll?.selector || null;
-                if (!selector) {
-                  try {
-                    const nodeId = await getNodeForLocation(boundedX, boundedY);
-                    selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
-                  } catch {}
-                }
+                if (!selector) selector = await generateSelectorAtPoint(boundedX, boundedY);
                 if (!recorderState.scroll) {
                   recorderState.scroll = {
                     selector,
@@ -3901,35 +3897,159 @@ async function ensureDOMAndOverlayEnabled(client: any) {
   try { await client.send('Overlay.enable'); } catch {}
 }
 
-async function getNodeForLocation(x: number, y: number) {
-  const client = await getCDPClient();
-  await ensureDOMAndOverlayEnabled(client);
-  const result = await client.send('DOM.getNodeForLocation', {
-    x,
-    y,
-    includeUserAgentShadowDOM: true,
-    ignorePointerEventsNone: false
-  });
-  return result?.nodeId as number | undefined;
-}
+// Robust selector generation using in-page heuristics at screen coordinates
+async function generateSelectorAtPoint(x: number, y: number): Promise<string | null> {
+  if (!stagehand?.page) return null;
+  try {
+    return await stagehand.page.evaluate(({ x, y }) => {
+      const startTime = Date.now();
+      const TIMEOUT_MS = 50;
+      const isTimedOut = () => Date.now() - startTime > TIMEOUT_MS;
 
-async function resolveObjectIdForNodeId(nodeId: number) {
-  const client = await getCDPClient();
-  const { object } = await client.send('DOM.resolveNode', { nodeId });
-  return object?.objectId as string | undefined;
-}
+      const isSelectorUnique = (sel: string, el: Element) => {
+        if (!sel) return false;
+        try {
+          const list = document.querySelectorAll(sel);
+          return list.length === 1 && list[0] === el;
+        } catch { return false; }
+      };
 
-// Compute a robust CSS selector in-page for the given node
-async function computeSelectorForNodeId(nodeId: number): Promise<string | null> {
-  const objectId = await resolveObjectIdForNodeId(nodeId);
-  if (!objectId) return null;
-  const client = await getCDPClient();
-  const { result } = await client.send('Runtime.callFunctionOn', {
-    objectId,
-    functionDeclaration: "function() {\n      var el = this;\n      if (!el || el.nodeType !== 1) return null;\n      var getAttr = function(n){ return el.getAttribute(n); };\n      var testid = getAttr('data-testid') || getAttr('data-test-id') || getAttr('data-test');\n      if (testid) return '[data-testid=\"' + testid + '\"]';\n      if (el.id) return '#' + el.id;\n      var parts = [];\n      var node = el;\n      var depth = 0;\n      while (node && depth < 5 && node.nodeType === 1 && node.tagName.toLowerCase() !== 'html') {\n        var part = node.tagName.toLowerCase();\n        var nth = 1;\n        var sib = node.previousElementSibling;\n        while (sib) { if (sib.tagName === node.tagName) nth++; sib = sib.previousElementSibling; }\n        parts.unshift(part + ':nth-of-type(' + nth + ')');\n        node = node.parentElement;\n        depth++;\n      }\n      return parts.join(' > ');\n    }",
-    returnByValue: true
-  });
-  return (result && result.value) || null;
+      const cssEscape = (str: string): string => {
+        if (!str) return str;
+        let escaped = (window as any).CSS && (window as any).CSS.escape ? (window as any).CSS.escape(str) : str.replace(/[^a-zA-Z0-9_-]/g, (r) => '\\' + r);
+        // Fix numeric-start space issue from CSS.escape
+        escaped = escaped.replace(/\\([0-9a-f]+)\s+(-)/gi, "\\$1$2");
+        return escaped;
+      };
+
+      const isLikelyDynamicId = (id: string) =>
+        !!id && (id.includes(':') || /^radix-/.test(id) || /^[A-Za-z]+-[0-9a-f]{6,}$/.test(id) || /^[0-9a-f-]{8,}$/.test(id));
+
+      const isLikelyDynamicClass = (cls: string) =>
+        !!cls && (cls.includes(':') || (/^[a-z0-9]+$/.test(cls) && cls.length > 15) || /\d{2,}/.test(cls) || /^css-[a-f0-9]{6,}$/i.test(cls));
+
+      const getAccessibleName = (el: Element): string | null => {
+        const aria = el.getAttribute('aria-label');
+        if (aria) return aria;
+        const txt = el.textContent?.trim();
+        return txt && txt.length < 50 ? txt : null;
+      };
+
+      const buildElementSelector = (el: Element, forbidAncestor = false): string | null => {
+        if (isTimedOut()) return null;
+        // 1) data-test attrs
+        const testAttrs = ['data-testid','data-test','data-cy','data-automation-id','data-qa','data-test-id'];
+        for (const a of testAttrs) {
+          const v = el.getAttribute(a);
+          if (v) {
+            const sel = `[${a}="${cssEscape(v)}"]`;
+            if (isSelectorUnique(sel, el)) return sel;
+          }
+        }
+        // 2) id
+        if ((el as HTMLElement).id && !isLikelyDynamicId((el as HTMLElement).id)) {
+          const idSel = `#${cssEscape((el as HTMLElement).id)}`;
+          if (isSelectorUnique(idSel, el)) return idSel;
+        }
+        // 3) role + accessible name
+        const role = el.getAttribute('role') || el.tagName.toLowerCase();
+        const acc = getAccessibleName(el);
+        if (acc) {
+          const aria = el.getAttribute('aria-label');
+          if (aria) {
+            const sel = `[role="${role}"][aria-label="${cssEscape(aria)}"]`;
+            if (isSelectorUnique(sel, el)) return sel;
+          }
+        }
+        // 4) form attrs
+        const formAttrs = ['name','placeholder','for','type'];
+        for (const a of formAttrs) {
+          const v = el.getAttribute(a);
+          if (v) {
+            const sel = `${el.tagName.toLowerCase()}[${a}="${cssEscape(v)}"]`;
+            if (isSelectorUnique(sel, el)) return sel;
+          }
+        }
+        // 5) aria attrs
+        const ariaAttrs = ['aria-label','aria-labelledby','aria-describedby','aria-controls','aria-expanded','aria-selected'];
+        for (const a of ariaAttrs) {
+          const v = el.getAttribute(a);
+          if (v && !isLikelyDynamicId(v)) {
+            const sel = `${el.tagName.toLowerCase()}[${a}="${cssEscape(v)}"]`;
+            if (isSelectorUnique(sel, el)) return sel;
+          }
+        }
+        // 6) stable classes
+        if ((el as HTMLElement).className && typeof (el as HTMLElement).className === 'string') {
+          const classes = (el as HTMLElement).className.split(/\s+/).filter(Boolean);
+          const stable = classes.filter(c => !isLikelyDynamicClass(c));
+          if (stable.length > 0) {
+            const tag = el.tagName.toLowerCase();
+            const max = Math.min(stable.length, 2);
+            for (let i = 0; i < max; i++) {
+              const parts = stable.slice(0, i+1).map(cssEscape).join('.');
+              const sel = `${tag}.${parts}`;
+              if (isSelectorUnique(sel, el)) return sel;
+            }
+          }
+        }
+        // 7) nth-of-type path up to limited depth
+        if (!forbidAncestor && el.parentElement) {
+          const siblings = Array.from(el.parentElement.children).filter(n => n.tagName === el.tagName);
+          const index = siblings.indexOf(el) + 1;
+          const nthSel = `${el.tagName.toLowerCase()}:nth-of-type(${index})`;
+          if (isSelectorUnique(nthSel, el)) return nthSel;
+        }
+        return null;
+      };
+
+      const el = document.elementFromPoint(x, y) as Element | null;
+      if (!el) return null;
+
+      // Strategy 1: direct selector
+      const direct = buildElementSelector(el);
+      if (direct) return direct;
+
+      // Strategy 2: climb ancestors to find stable, then relative path
+      let current: Element | null = el.parentElement;
+      while (current && current !== document.body && !isTimedOut()) {
+        const anc = buildElementSelector(current);
+        if (anc) {
+          const leaf = buildElementSelector(el, true);
+          if (leaf) {
+            const combined = `${anc} ${leaf}`;
+            if (isSelectorUnique(combined, el)) return combined;
+          }
+        }
+        current = current.parentElement;
+      }
+
+      // Strategy 3: CSS path with nth-of-type from leaf up to depth
+      const path: string[] = [];
+      let node: Element | null = el;
+      let depth = 0;
+      while (node && node !== document.body && depth < 10 && !isTimedOut()) {
+        if (node.parentElement) {
+          const sibs = Array.from(node.parentElement.children).filter(n => n.tagName === node!.tagName);
+          if (sibs.length === 1) {
+            path.unshift(node.tagName.toLowerCase());
+          } else {
+            const idx = sibs.indexOf(node) + 1;
+            path.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${idx})`);
+          }
+          const test = path.join(' > ');
+          if (isSelectorUnique(test, el)) return test;
+        }
+        node = node.parentElement;
+        depth++;
+      }
+
+      // Final fallback
+      return el.tagName.toLowerCase();
+    }, { x, y });
+  } catch {
+    return null;
+  }
 }
 
 async function highlightNode(nodeId: number) {
@@ -3961,7 +4081,6 @@ async function getFocusedSelector(): Promise<string | null> {
       const testid = attr('data-testid') || attr('data-test-id') || attr('data-test');
       if (testid) return `[data-testid="${cssEscape(testid)}"]`;
       if ((el as HTMLElement).id) return `#${cssEscape((el as HTMLElement).id)}`;
-      // Fallback simple path
       const parts: string[] = [];
       let node: Element | null = el;
       let depth = 0;
