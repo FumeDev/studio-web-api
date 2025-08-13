@@ -3974,7 +3974,7 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
   try {
     return await stagehand.page.evaluate(({ x, y }) => {
       const startTime = Date.now();
-      const TIMEOUT_MS = 50;
+      const TIMEOUT_MS = 200;
       const isTimedOut = () => Date.now() - startTime > TIMEOUT_MS;
 
       const isSelectorUnique = (sel: string, el: Element) => {
@@ -4071,6 +4071,20 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
           const nthSel = `${el.tagName.toLowerCase()}:nth-of-type(${index})`;
           if (isSelectorUnique(nthSel, el)) return nthSel;
         }
+        // 8) Try role + aria-label directly
+        const aria = el.getAttribute('aria-label');
+        if (aria) {
+          const roleSel = `[role="${(el.getAttribute('role') || el.tagName.toLowerCase())}"][aria-label="${cssEscape(aria)}"]`;
+          if (isSelectorUnique(roleSel, el)) return roleSel;
+        }
+        // 9) Try name attribute for inputs/textareas
+        if (el.tagName.toLowerCase() === 'input' || el.tagName.toLowerCase() === 'textarea') {
+          const nameAttr = el.getAttribute('name');
+          if (nameAttr) {
+            const nameSel = `${el.tagName.toLowerCase()}[name="${cssEscape(nameAttr)}"]`;
+            if (isSelectorUnique(nameSel, el)) return nameSel;
+          }
+        }
         return null;
       };
 
@@ -4078,7 +4092,22 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
       if (!el) return null;
 
       // Strategy 1: direct selector
-      const direct = buildElementSelector(el);
+      let direct = buildElementSelector(el);
+      if (!direct) {
+        // Special-case Google search box (combobox role/aria-label)
+        const aria = el.getAttribute('aria-label');
+        if (aria) {
+          const roleSel = `[role="${(el.getAttribute('role') || el.tagName.toLowerCase())}"][aria-label="${cssEscape(aria)}"]`;
+          if (isSelectorUnique(roleSel, el)) direct = roleSel;
+        }
+        if (!direct && (el.tagName.toLowerCase() === 'textarea' || el.tagName.toLowerCase() === 'input')) {
+          const nameAttr = el.getAttribute('name');
+          if (nameAttr) {
+            const nameSel = `${el.tagName.toLowerCase()}[name="${cssEscape(nameAttr)}"]`;
+            if (isSelectorUnique(nameSel, el)) direct = nameSel;
+          }
+        }
+      }
       if (direct) return direct;
 
       // Strategy 2: climb ancestors to find stable, then relative path
