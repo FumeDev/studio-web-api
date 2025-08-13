@@ -3344,11 +3344,21 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               const params = message.params || {};
               // Mouse down: save start
               if (inputType === 'mouseDown') {
-                const nodeId = await getNodeForLocation(params.x, params.y);
-                const selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
+                const meta = lastCDPFrame?.metadata;
+                const boundedX = (meta && typeof meta.deviceWidth === 'number')
+                  ? Math.max(0, Math.min(params.x, meta.deviceWidth))
+                  : params.x;
+                const boundedY = (meta && typeof meta.deviceHeight === 'number')
+                  ? Math.max(0, Math.min(params.y, meta.deviceHeight))
+                  : params.y;
+                let selector: string | null = null;
+                try {
+                  const nodeId = await getNodeForLocation(boundedX, boundedY);
+                  selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
+                } catch {}
                 recorderState.lastMouseDown = {
-                  x: params.x,
-                  y: params.y,
+                  x: boundedX,
+                  y: boundedY,
                   time: Date.now(),
                   selector,
                   button: params.button || 'left',
@@ -3359,9 +3369,19 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               // Mouse up: click/doubleclick/drag
               if (inputType === 'mouseUp' && recorderState.lastMouseDown) {
                 const down = recorderState.lastMouseDown;
-                const moved = Math.hypot(params.x - down.x, params.y - down.y) > 4;
-                const nodeUpId = await getNodeForLocation(params.x, params.y);
-                const upSelector = nodeUpId ? await computeSelectorForNodeId(nodeUpId) : null;
+                const meta = lastCDPFrame?.metadata;
+                const boundedX = (meta && typeof meta.deviceWidth === 'number')
+                  ? Math.max(0, Math.min(params.x, meta.deviceWidth))
+                  : params.x;
+                const boundedY = (meta && typeof meta.deviceHeight === 'number')
+                  ? Math.max(0, Math.min(params.y, meta.deviceHeight))
+                  : params.y;
+                const moved = Math.hypot(boundedX - down.x, boundedY - down.y) > 4;
+                let upSelector: string | null = null;
+                try {
+                  const nodeUpId = await getNodeForLocation(boundedX, boundedY);
+                  upSelector = nodeUpId ? await computeSelectorForNodeId(nodeUpId) : null;
+                } catch {}
                 const after = lastCDPFrame?.data;
                 if (!moved) {
                   const isDouble = (down.clickCount || 1) >= 2 && (down.button === 'left');
@@ -3369,8 +3389,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                     type: 'recorded-action',
                     action: isDouble ? 'doubleclick' : 'click',
                     selector: upSelector || down.selector,
-                    x: params.x,
-                    y: params.y,
+                    x: boundedX,
+                    y: boundedY,
                     button: down.button,
                     before: down.before,
                     after
@@ -3380,7 +3400,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                     type: 'recorded-action',
                     action: 'drag',
                     from: { selector: down.selector, x: down.x, y: down.y },
-                    to: { selector: upSelector, x: params.x, y: params.y },
+                    to: { selector: upSelector, x: boundedX, y: boundedY },
                     before: down.before,
                     after
                   }));
