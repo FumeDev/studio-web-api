@@ -3219,10 +3219,12 @@ wss.on('connection', (ws: WebSocket, req: any) => {
     isRecording: boolean;
     isInspectMode: boolean;
     lastMouseDown: null | { x: number; y: number; time: number; selector: string | null; button?: string; clickCount?: number; before?: string };
+    scroll: null | { selector: string | null; deltaX: number; deltaY: number; before?: string; timer?: NodeJS.Timeout };
   } = {
     isRecording: false,
     isInspectMode: false,
-    lastMouseDown: null
+    lastMouseDown: null,
+    scroll: null
   };
   
   ws.on('message', async (data) => {
@@ -3385,9 +3387,8 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 }
                 recorderState.lastMouseDown = null;
               }
-              // Wheel: simple per-event record
+              // Wheel: coalesce burst into a single action after idle
               if (inputType === 'mouseWheel') {
-                // Clamp coordinates to frame bounds if available
                 const meta = lastCDPFrame?.metadata;
                 const boundedX = (meta && typeof meta.deviceWidth === 'number')
                   ? Math.max(0, Math.min(params.x, meta.deviceWidth))
@@ -3395,22 +3396,40 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 const boundedY = (meta && typeof meta.deviceHeight === 'number')
                   ? Math.max(0, Math.min(params.y, meta.deviceHeight))
                   : params.y;
-                let selector: string | null = null;
-                try {
-                  const nodeId = await getNodeForLocation(boundedX, boundedY);
-                  selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
-                } catch (e) {
-                  // No node at location – ignore selector resolution
+                let selector: string | null = recorderState.scroll?.selector || null;
+                if (!selector) {
+                  try {
+                    const nodeId = await getNodeForLocation(boundedX, boundedY);
+                    selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
+                  } catch {}
                 }
-                ws.send(JSON.stringify({
-                  type: 'recorded-action',
-                  action: 'scroll',
-                  selector,
-                  deltaX: params.deltaX || 0,
-                  deltaY: params.deltaY || 0,
-                  before: lastCDPFrame?.data,
-                  after: lastCDPFrame?.data
-                }));
+                if (!recorderState.scroll) {
+                  recorderState.scroll = {
+                    selector,
+                    deltaX: params.deltaX || 0,
+                    deltaY: params.deltaY || 0,
+                    before: lastCDPFrame?.data,
+                    timer: undefined
+                  };
+                } else {
+                  recorderState.scroll.deltaX += params.deltaX || 0;
+                  recorderState.scroll.deltaY += params.deltaY || 0;
+                }
+                if (recorderState.scroll.timer) clearTimeout(recorderState.scroll.timer);
+                recorderState.scroll.timer = setTimeout(() => {
+                  const s = recorderState.scroll;
+                  if (!s) return;
+                  ws.send(JSON.stringify({
+                    type: 'recorded-action',
+                    action: 'scroll',
+                    selector: s.selector,
+                    deltaX: s.deltaX,
+                    deltaY: s.deltaY,
+                    before: s.before,
+                    after: lastCDPFrame?.data
+                  }));
+                  recorderState.scroll = null;
+                }, 200);
               }
               // Key typing: record printable and specials as discrete events
               if (inputType === 'keyDown') {
