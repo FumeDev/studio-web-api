@@ -3387,8 +3387,21 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               }
               // Wheel: simple per-event record
               if (inputType === 'mouseWheel') {
-                const nodeId = await getNodeForLocation(params.x, params.y);
-                const selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
+                // Clamp coordinates to frame bounds if available
+                const meta = lastCDPFrame?.metadata;
+                const boundedX = (meta && typeof meta.deviceWidth === 'number')
+                  ? Math.max(0, Math.min(params.x, meta.deviceWidth))
+                  : params.x;
+                const boundedY = (meta && typeof meta.deviceHeight === 'number')
+                  ? Math.max(0, Math.min(params.y, meta.deviceHeight))
+                  : params.y;
+                let selector: string | null = null;
+                try {
+                  const nodeId = await getNodeForLocation(boundedX, boundedY);
+                  selector = nodeId ? await computeSelectorForNodeId(nodeId) : null;
+                } catch (e) {
+                  // No node at location – ignore selector resolution
+                }
                 ws.send(JSON.stringify({
                   type: 'recorded-action',
                   action: 'scroll',
