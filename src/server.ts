@@ -3354,15 +3354,29 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               // Mouse down: save start
               if (inputType === 'mouseDown') {
                 const meta = lastCDPFrame?.metadata;
-                const scale = (meta && typeof meta.pageScaleFactor === 'number' && meta.pageScaleFactor > 0) ? meta.pageScaleFactor : 1;
-                const cssX = Math.round((params.x || 0) / scale);
-                const cssY = Math.round((params.y || 0) / scale);
-                const boundedX = (meta && typeof meta.deviceWidth === 'number')
-                  ? Math.max(0, Math.min(cssX, meta.deviceWidth))
-                  : cssX;
-                const boundedY = (meta && typeof meta.deviceHeight === 'number')
-                  ? Math.max(0, Math.min(cssY, meta.deviceHeight))
-                  : cssY;
+                let cssX = params.x || 0;
+                let cssY = params.y || 0;
+                let boundedX = cssX;
+                let boundedY = cssY;
+                
+                if (meta) {
+                  const scale = meta.pageScaleFactor || 1;
+                  const physical_w = meta.deviceWidth * scale;
+                  const physical_h = meta.deviceHeight * scale;
+                  const resize_factor = Math.min(1920 / physical_w, 1080 / physical_h, 1);
+                  const assumed_image_w = physical_w * resize_factor;
+                  const assumed_image_h = physical_h * resize_factor;
+                  
+                  cssX = (params.x || 0) * (meta.deviceWidth / assumed_image_w);
+                  cssY = (params.y || 0) * (meta.deviceHeight / assumed_image_h);
+                  
+                  boundedX = Math.max(0, Math.min(cssX, meta.deviceWidth));
+                  boundedY = Math.max(0, Math.min(cssY, meta.deviceHeight));
+                  
+                  // Added logging for debugging
+                  console.log(`[Recorder] MouseDown coords: input(${params.x},${params.y}) -> css(${cssX},${cssY}) -> bounded(${boundedX},${boundedY}), scale=${scale}, resize_factor=${resize_factor}, assumed_w=${assumed_image_w}`);
+                }
+                
                 const selRes = await generateSelectorAtPointWithDebug(boundedX, boundedY);
                 const selector = selRes.selector;
                 if (!selector) {
@@ -3384,15 +3398,29 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               if (inputType === 'mouseUp' && recorderState.lastMouseDown) {
                 const down = recorderState.lastMouseDown;
                 const meta = lastCDPFrame?.metadata;
-                const scale = (meta && typeof meta.pageScaleFactor === 'number' && meta.pageScaleFactor > 0) ? meta.pageScaleFactor : 1;
-                const cssX = Math.round((params.x || 0) / scale);
-                const cssY = Math.round((params.y || 0) / scale);
-                const boundedX = (meta && typeof meta.deviceWidth === 'number')
-                  ? Math.max(0, Math.min(cssX, meta.deviceWidth))
-                  : cssX;
-                const boundedY = (meta && typeof meta.deviceHeight === 'number')
-                  ? Math.max(0, Math.min(cssY, meta.deviceHeight))
-                  : cssY;
+                let cssX = params.x || 0;
+                let cssY = params.y || 0;
+                let boundedX = cssX;
+                let boundedY = cssY;
+                
+                if (meta) {
+                  const scale = meta.pageScaleFactor || 1;
+                  const physical_w = meta.deviceWidth * scale;
+                  const physical_h = meta.deviceHeight * scale;
+                  const resize_factor = Math.min(1920 / physical_w, 1080 / physical_h, 1);
+                  const assumed_image_w = physical_w * resize_factor;
+                  const assumed_image_h = physical_h * resize_factor;
+                  
+                  cssX = (params.x || 0) * (meta.deviceWidth / assumed_image_w);
+                  cssY = (params.y || 0) * (meta.deviceHeight / assumed_image_h);
+                  
+                  boundedX = Math.max(0, Math.min(cssX, meta.deviceWidth));
+                  boundedY = Math.max(0, Math.min(cssY, meta.deviceHeight));
+                  
+                  // Added logging for debugging
+                  console.log(`[Recorder] MouseUp coords: input(${params.x},${params.y}) -> css(${cssX},${cssY}) -> bounded(${boundedX},${boundedY}), scale=${scale}, resize_factor=${resize_factor}, assumed_w=${assumed_image_w}`);
+                }
+                
                 const moved = Math.hypot(boundedX - down.x, boundedY - down.y) > 4;
                 const selResUp = await generateSelectorAtPointWithDebug(boundedX, boundedY);
                 const upSelector = selResUp.selector;
@@ -3429,15 +3457,29 @@ wss.on('connection', (ws: WebSocket, req: any) => {
               // Wheel: coalesce burst into a single action after idle
               if (inputType === 'mouseWheel') {
                 const meta = lastCDPFrame?.metadata;
-                const scale = (meta && typeof meta.pageScaleFactor === 'number' && meta.pageScaleFactor > 0) ? meta.pageScaleFactor : 1;
-                const cssX = Math.round((params.x || 0) / scale);
-                const cssY = Math.round((params.y || 0) / scale);
-                const boundedX = (meta && typeof meta.deviceWidth === 'number')
-                  ? Math.max(0, Math.min(cssX, meta.deviceWidth))
-                  : cssX;
-                const boundedY = (meta && typeof meta.deviceHeight === 'number')
-                  ? Math.max(0, Math.min(cssY, meta.deviceHeight))
-                  : cssY;
+                let cssX = params.x || 0;
+                let cssY = params.y || 0;
+                let boundedX = cssX;
+                let boundedY = cssY;
+                
+                if (meta) {
+                  const scale = meta.pageScaleFactor || 1;
+                  const physical_w = meta.deviceWidth * scale;
+                  const physical_h = meta.deviceHeight * scale;
+                  const resize_factor = Math.min(1920 / physical_w, 1080 / physical_h, 1);
+                  const assumed_image_w = physical_w * resize_factor;
+                  const assumed_image_h = physical_h * resize_factor;
+                  
+                  cssX = (params.x || 0) * (meta.deviceWidth / assumed_image_w);
+                  cssY = (params.y || 0) * (meta.deviceHeight / assumed_image_h);
+                  
+                  boundedX = Math.max(0, Math.min(cssX, meta.deviceWidth));
+                  boundedY = Math.max(0, Math.min(cssY, meta.deviceHeight));
+                  
+                  // Added logging for debugging
+                  console.log(`[Recorder] MouseWheel coords: input(${params.x},${params.y}) -> css(${cssX},${cssY}) -> bounded(${boundedX},${boundedY}), scale=${scale}, resize_factor=${resize_factor}, assumed_w=${assumed_image_w}`);
+                }
+                
                 let selector: string | null = recorderState.scroll?.selector || null;
                 if (!selector) {
                   const selResScroll = await generateSelectorAtPointWithDebug(boundedX, boundedY);
@@ -3498,7 +3540,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
             console.error(`Input injection error for ${clientId}:`, error);
             ws.send(JSON.stringify({
               type: 'error',
-              message: `Input error: ${error}`
+              message: `Input failed: ${error}`
             }));
           }
           break;
