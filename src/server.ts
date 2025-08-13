@@ -4017,53 +4017,52 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
           const v = el.getAttribute(a);
           if (v) {
             const sel = `[${a}="${cssEscape(v)}"]`;
-            if (isSelectorUnique(sel, el)) return sel;
+            return sel;
           }
         }
-        // 2) id
-        if ((el as HTMLElement).id && !isLikelyDynamicId((el as HTMLElement).id)) {
+        // 2) id (accept even if not globally unique)
+        if ((el as HTMLElement).id) {
           const idSel = `#${cssEscape((el as HTMLElement).id)}`;
-          if (isSelectorUnique(idSel, el)) return idSel;
+          return idSel;
         }
-        // 3) role + accessible name
+        // 3) role + accessible name (accept)
         const role = el.getAttribute('role') || el.tagName.toLowerCase();
         const acc = getAccessibleName(el);
         if (acc) {
           const aria = el.getAttribute('aria-label');
           if (aria) {
             const sel = `[role="${role}"][aria-label="${cssEscape(aria)}"]`;
-            if (isSelectorUnique(sel, el)) return sel;
+            return sel;
           }
         }
-        // 4) form attrs
+        // 4) form attrs (accept)
         const formAttrs = ['name','placeholder','for','type'];
         for (const a of formAttrs) {
           const v = el.getAttribute(a);
           if (v) {
             const sel = `${el.tagName.toLowerCase()}[${a}="${cssEscape(v)}"]`;
-            if (isSelectorUnique(sel, el)) return sel;
+            return sel;
           }
         }
-        // 5) aria attrs
+        // 5) aria attrs (accept)
         const ariaAttrs = ['aria-label','aria-labelledby','aria-describedby','aria-controls','aria-expanded','aria-selected'];
         for (const a of ariaAttrs) {
           const v = el.getAttribute(a);
-          if (v && !isLikelyDynamicId(v)) {
+          if (v) {
             const sel = `${el.tagName.toLowerCase()}[${a}="${cssEscape(v)}"]`;
-            if (isSelectorUnique(sel, el)) return sel;
+            return sel;
           }
         }
-        // 6) stable classes
+        // 6) classes (accept up to 2)
         if ((el as HTMLElement).className && typeof (el as HTMLElement).className === 'string') {
           const classes = (el as HTMLElement).className.split(/\s+/).filter(Boolean);
-          const stable = classes.filter(c => !isLikelyDynamicClass(c));
-          if (stable.length > 0) {
+          if (classes.length > 0) {
             const tag = el.tagName.toLowerCase();
-            const max = Math.min(stable.length, 2);
+            const max = Math.min(classes.length, 2);
             for (let i = 0; i < max; i++) {
-              const parts = stable.slice(0, i+1).map(cssEscape).join('.');
+              const parts = classes.slice(0, i+1).map(cssEscape).join('.');
               const sel = `${tag}.${parts}`;
-              if (isSelectorUnique(sel, el)) return sel;
+              return sel;
             }
           }
         }
