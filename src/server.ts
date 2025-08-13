@@ -3364,6 +3364,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   ? Math.max(0, Math.min(cssY, meta.deviceHeight))
                   : cssY;
                 const selector = await generateSelectorAtPoint(boundedX, boundedY);
+                if (!selector) {
+                  const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
+                  logSelectorDebug('mouseDown-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
+                }
                 recorderState.lastMouseDown = {
                   x: boundedX,
                   y: boundedY,
@@ -3389,6 +3393,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   : cssY;
                 const moved = Math.hypot(boundedX - down.x, boundedY - down.y) > 4;
                 const upSelector = await generateSelectorAtPoint(boundedX, boundedY);
+                if (!upSelector) {
+                  const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
+                  logSelectorDebug('mouseUp-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
+                }
                 const after = lastCDPFrame?.data;
                 if (!moved) {
                   const isDouble = (down.clickCount || 1) >= 2 && (down.button === 'left');
@@ -3428,6 +3436,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   : cssY;
                 let selector: string | null = recorderState.scroll?.selector || null;
                 if (!selector) selector = await generateSelectorAtPoint(boundedX, boundedY);
+                if (!selector) {
+                  const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
+                  logSelectorDebug('wheel-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
+                }
                 if (!recorderState.scroll) {
                   recorderState.scroll = {
                     selector,
@@ -3904,6 +3916,56 @@ async function getCDPClient() {
 async function ensureDOMAndOverlayEnabled(client: any) {
   try { await client.send('DOM.enable'); } catch {}
   try { await client.send('Overlay.enable'); } catch {}
+}
+
+// Debug helpers
+async function getElementSnapshotAtPoint(x: number, y: number): Promise<any> {
+  if (!stagehand?.page) return null;
+  try {
+    return await stagehand.page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y) as Element | null;
+      if (!el) return { exists: false };
+      const snapshot: any = {
+        exists: true,
+        tag: el.tagName.toLowerCase(),
+        id: (el as HTMLElement).id || null,
+        className: (el as HTMLElement).className || null,
+        role: el.getAttribute('role') || null,
+        attrs: {},
+      };
+      const attrs = ['data-testid','data-test','data-cy','data-automation-id','data-qa','data-test-id','aria-label','name','placeholder','type','for'];
+      attrs.forEach(a => { const v = el.getAttribute(a); if (v) (snapshot.attrs as any)[a] = v; });
+      // Shallow ancestor tags
+      const ancestors: string[] = [];
+      let cur: Element | null = el.parentElement;
+      let depth = 0;
+      while (cur && depth < 5) { ancestors.push(cur.tagName.toLowerCase()); cur = cur.parentElement; depth++; }
+      snapshot.ancestors = ancestors;
+      return snapshot;
+    }, { x, y });
+  } catch (e) {
+    return { exists: false, error: (e as Error).message };
+  }
+}
+
+function logSelectorDebug(context: string, params: { cssX: number; cssY: number; boundedX: number; boundedY: number; meta?: any; snapshot?: any; }) {
+  const meta = params.meta || {};
+  const info = {
+    context,
+    cssX: params.cssX,
+    cssY: params.cssY,
+    boundedX: params.boundedX,
+    boundedY: params.boundedY,
+    frame: meta ? {
+      deviceWidth: meta.deviceWidth,
+      deviceHeight: meta.deviceHeight,
+      pageScaleFactor: meta.pageScaleFactor,
+      scrollX: meta.scrollX,
+      scrollY: meta.scrollY
+    } : undefined,
+    snapshot: params.snapshot || null
+  };
+  console.log('[SelectorDebug]', JSON.stringify(info));
 }
 
 // Robust selector generation using in-page heuristics at screen coordinates
