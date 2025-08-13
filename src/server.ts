@@ -1202,6 +1202,15 @@ Here are some example pitfalls you might fall into and how to tackle them:
 - Not being able to find a component the task is referring to -> Scroll down the page to see if it's below the current view, or make speculative guess by looking at the icons and navigating around the app to find it.
 - Not getting the intended result from an action -> Try again with a different approach. The wrong action may also uncover a new path to success. Be persistent and patient.
 - Mistaking the placeholder in a text input for the actual text -> If you see a text input with a half transparent text inside and it has '(PLACEHOLDER)' in the end, it's most likely a placeholder. You can usually click on it to select it and then type your own text without needing to clear it first.
+- Not being able to select an option in a dropdown -> Click on the dropdown, even if you don't see the options appear, type the option you want to select and press RETURN. Trust that the option will be selected even if you could not see the options dropping down. You can confirm the right option is selected by looking at the text of the selected option after you press RETURN.
+
+Here are some example pitfalls you might fall into and how to tackle them:
+- Not seeing the element the user user wants you to interact with -> Try hovering over navbars to expand them to see the option names or play around the app to expand sections to find the element.
+- Popups, modals, nav bars etc. blocking the important content on the page -> Dismiss the obstacle by clicking on an "X" or "Close" button. Or, if there is no button, click on the empty area outside of the obstacle.
+- Scrolling **inside** a sub-component instead of the entire page -> First move the mouse to the center of the element you want to scroll in - hovering over it. Then, scroll how many pixels you need to scroll in the direction you want to scroll in.
+- Not being able to find a component the task is referring to -> Scroll down the page to see if it's below the current view, or make speculative guess by looking at the icons and navigating around the app to find it.
+- Not getting the intended result from an action -> Try again with a different approach. The wrong action may also uncover a new path to success. Be persistent and patient.
+- Mistaking the placeholder in a text input for the actual text -> If you see a text input with a half transparent text inside and it has '(PLACEHOLDER)' in the end, it's most likely a placeholder. You can usually click on it to select it and then type your own text without needing to clear it first.
 - Not being able to select an option in a dropdown -> Click on the dropdown, even if you don't see the options appear, type the option you want to select and press RETURN. Trust that the option will be selected even if you could not see the options dropping down. You can confirm the right option is selected by looking at the text of the selected option after you press RETURN.`
     });
 
@@ -3341,24 +3350,18 @@ wss.on('connection', (ws: WebSocket, req: any) => {
         case 'input':
           // Handle input events
           try {
-            await injectCDPInput(message.inputType, message.params);
-            ws.send(JSON.stringify({
-              type: 'input-ack',
-              inputType: message.inputType
-            }));
-            
             // Recorder: emit actions while recording
             if (recorderState.isRecording) {
               const inputType = message.inputType as string;
               const params = message.params || {};
-              // Mouse down: save start
-              if (inputType === 'mouseDown') {
+              
+              // Compute selector before injecting input to avoid context destruction
+              let preSelector: string | null = null;
+              let boundedX: number = params.x || 0;
+              let boundedY: number = params.y || 0;
+              
+              if (['mouseDown', 'mouseUp', 'mouseWheel'].includes(inputType)) {
                 const meta = lastCDPFrame?.metadata;
-                let cssX = params.x || 0;
-                let cssY = params.y || 0;
-                let boundedX = cssX;
-                let boundedY = cssY;
-                
                 if (meta) {
                   const scale = meta.pageScaleFactor || 1;
                   const physical_w = meta.deviceWidth * scale;
@@ -3367,75 +3370,79 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   const assumed_image_w = physical_w * resize_factor;
                   const assumed_image_h = physical_h * resize_factor;
                   
-                  cssX = (params.x || 0) * (meta.deviceWidth / assumed_image_w);
-                  cssY = (params.y || 0) * (meta.deviceHeight / assumed_image_h);
+                  const cssX = (params.x || 0) * (meta.deviceWidth / assumed_image_w);
+                  const cssY = (params.y || 0) * (meta.deviceHeight / assumed_image_h);
                   
                   boundedX = Math.max(0, Math.min(cssX, meta.deviceWidth));
                   boundedY = Math.max(0, Math.min(cssY, meta.deviceHeight));
                   
-                  // Added logging for debugging
-                  console.log(`[Recorder] MouseDown coords: input(${params.x},${params.y}) -> css(${cssX},${cssY}) -> bounded(${boundedX},${boundedY}), scale=${scale}, resize_factor=${resize_factor}, assumed_w=${assumed_image_w}`);
+                  console.log(`[Recorder] ${inputType} pre-coords: input(${params.x},${params.y}) -> css(${cssX},${cssY}) -> bounded(${boundedX},${boundedY}), scale=${scale}, resize_factor=${resize_factor}`);
                 }
                 
-                const selRes = await generateSelectorAtPointWithDebug(boundedX, boundedY);
-                const selector = selRes.selector;
-                if (!selector) {
-                  const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
-                  logSelectorDebug('mouseDown-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
-                  logSelectorCandidates('mouseDown-candidates', { cssX, cssY, boundedX, boundedY, candidates: selRes.candidates, chosen: null, promotedTag: selRes.promotedTag, actionableTag: selRes.actionableTag, evalError: selRes.evalError || null });
+                // Simple selector generation
+                if (!stagehand) {
+                  console.log('[Recorder] Stagehand is null, cannot generate selector');
+                  preSelector = null;
+                } else {
+                  preSelector = await stagehand.page.evaluate(({ x, y }) => {
+                    const el = document.elementFromPoint(x, y);
+                    if (!el) return null;
+                    
+                    const path = [];
+                    let current: Element | null = el;
+                    while (current && current !== document.documentElement) {
+                      let selector = current!.tagName.toLowerCase();
+                      if (current!.id) {
+                        selector = `#${CSS.escape(current!.id)}`;
+                        path.unshift(selector);
+                        break; // ID is unique
+                      }
+                      const siblings = Array.from(current!.parentElement?.children || []).filter(child => child.tagName === current!.tagName);
+                      const index = siblings.indexOf(current!) + 1;
+                      if (index > 0) {
+                        selector += `:nth-child(${index})`;
+                      }
+                      path.unshift(selector);
+                      current = current!.parentElement;
+                    }
+                    return path.join(' > ');
+                  }, { x: boundedX, y: boundedY });
                 }
+              }
+              
+              // Now inject the input
+              await injectCDPInput(message.inputType, message.params);
+              
+              ws.send(JSON.stringify({
+                type: 'input-ack',
+                inputType: message.inputType
+              }));
+              
+              // Process recording with pre-computed selector
+              if (inputType === 'mouseDown') {
                 recorderState.lastMouseDown = {
                   x: boundedX,
                   y: boundedY,
                   time: Date.now(),
-                  selector,
+                  selector: preSelector,
                   button: params.button || 'left',
                   clickCount: params.clickCount || 1,
                   before: lastCDPFrame?.data
                 };
               }
-              // Mouse up: click/doubleclick/drag
+              
               if (inputType === 'mouseUp' && recorderState.lastMouseDown) {
                 const down = recorderState.lastMouseDown;
-                const meta = lastCDPFrame?.metadata;
-                let cssX = params.x || 0;
-                let cssY = params.y || 0;
-                let boundedX = cssX;
-                let boundedY = cssY;
-                
-                if (meta) {
-                  const scale = meta.pageScaleFactor || 1;
-                  const physical_w = meta.deviceWidth * scale;
-                  const physical_h = meta.deviceHeight * scale;
-                  const resize_factor = Math.min(1920 / physical_w, 1080 / physical_h, 1);
-                  const assumed_image_w = physical_w * resize_factor;
-                  const assumed_image_h = physical_h * resize_factor;
-                  
-                  cssX = (params.x || 0) * (meta.deviceWidth / assumed_image_w);
-                  cssY = (params.y || 0) * (meta.deviceHeight / assumed_image_h);
-                  
-                  boundedX = Math.max(0, Math.min(cssX, meta.deviceWidth));
-                  boundedY = Math.max(0, Math.min(cssY, meta.deviceHeight));
-                  
-                  // Added logging for debugging
-                  console.log(`[Recorder] MouseUp coords: input(${params.x},${params.y}) -> css(${cssX},${cssY}) -> bounded(${boundedX},${boundedY}), scale=${scale}, resize_factor=${resize_factor}, assumed_w=${assumed_image_w}`);
-                }
-                
                 const moved = Math.hypot(boundedX - down.x, boundedY - down.y) > 4;
-                const selResUp = await generateSelectorAtPointWithDebug(boundedX, boundedY);
-                const upSelector = selResUp.selector;
-                if (!upSelector) {
-                  const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
-                  logSelectorDebug('mouseUp-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
-                  logSelectorCandidates('mouseUp-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResUp.candidates, chosen: null, promotedTag: selResUp.promotedTag, actionableTag: selResUp.actionableTag, evalError: selResUp.evalError || null });
-                }
+                const upSelector = preSelector || down.selector;
                 const after = lastCDPFrame?.data;
+                
                 if (!moved) {
                   const isDouble = (down.clickCount || 1) >= 2 && (down.button === 'left');
                   ws.send(JSON.stringify({
                     type: 'recorded-action',
                     action: isDouble ? 'doubleclick' : 'click',
-                    selector: upSelector || down.selector,
+                    selector: upSelector,
                     x: boundedX,
                     y: boundedY,
                     button: down.button,
@@ -3454,42 +3461,10 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                 }
                 recorderState.lastMouseDown = null;
               }
-              // Wheel: coalesce burst into a single action after idle
+              
               if (inputType === 'mouseWheel') {
-                const meta = lastCDPFrame?.metadata;
-                let cssX = params.x || 0;
-                let cssY = params.y || 0;
-                let boundedX = cssX;
-                let boundedY = cssY;
+                let selector = recorderState.scroll?.selector || preSelector;
                 
-                if (meta) {
-                  const scale = meta.pageScaleFactor || 1;
-                  const physical_w = meta.deviceWidth * scale;
-                  const physical_h = meta.deviceHeight * scale;
-                  const resize_factor = Math.min(1920 / physical_w, 1080 / physical_h, 1);
-                  const assumed_image_w = physical_w * resize_factor;
-                  const assumed_image_h = physical_h * resize_factor;
-                  
-                  cssX = (params.x || 0) * (meta.deviceWidth / assumed_image_w);
-                  cssY = (params.y || 0) * (meta.deviceHeight / assumed_image_h);
-                  
-                  boundedX = Math.max(0, Math.min(cssX, meta.deviceWidth));
-                  boundedY = Math.max(0, Math.min(cssY, meta.deviceHeight));
-                  
-                  // Added logging for debugging
-                  console.log(`[Recorder] MouseWheel coords: input(${params.x},${params.y}) -> css(${cssX},${cssY}) -> bounded(${boundedX},${boundedY}), scale=${scale}, resize_factor=${resize_factor}, assumed_w=${assumed_image_w}`);
-                }
-                
-                let selector: string | null = recorderState.scroll?.selector || null;
-                if (!selector) {
-                  const selResScroll = await generateSelectorAtPointWithDebug(boundedX, boundedY);
-                  selector = selResScroll.selector;
-                  if (!selector) {
-                    const snapshot = await getElementSnapshotAtPoint(boundedX, boundedY);
-                    logSelectorDebug('wheel-null-selector', { cssX, cssY, boundedX, boundedY, meta, snapshot });
-                    logSelectorCandidates('wheel-candidates', { cssX, cssY, boundedX, boundedY, candidates: selResScroll.candidates, chosen: null, promotedTag: selResScroll.promotedTag, actionableTag: selResScroll.actionableTag, evalError: selResScroll.evalError || null });
-                  }
-                }
                 if (!recorderState.scroll) {
                   recorderState.scroll = {
                     selector,
@@ -3518,7 +3493,7 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   recorderState.scroll = null;
                 }, 200);
               }
-              // Key typing: record printable and specials as discrete events
+              
               if (inputType === 'keyDown') {
                 const text: string | undefined = typeof params.text === 'string' ? params.text : undefined;
                 const isPrintable = !!text && text.length === 1;
@@ -3535,6 +3510,13 @@ wss.on('connection', (ws: WebSocket, req: any) => {
                   }));
                 }
               }
+            } else {
+              // Non-recording input
+              await injectCDPInput(message.inputType, message.params);
+              ws.send(JSON.stringify({
+                type: 'input-ack',
+                inputType: message.inputType
+              }));
             }
           } catch (error) {
             console.error(`Input injection error for ${clientId}:`, error);
