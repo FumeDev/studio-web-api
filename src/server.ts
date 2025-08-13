@@ -3977,13 +3977,16 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
       const TIMEOUT_MS = 200;
       const isTimedOut = () => Date.now() - startTime > TIMEOUT_MS;
 
-      const isSelectorUnique = (sel: string, el: Element) => {
+      const isSelectorAcceptable = (sel: string, el: Element) => {
         if (!sel) return false;
         try {
           const list = document.querySelectorAll(sel);
-          return list.length === 1 && list[0] === el;
-        } catch { return false; }
+          if (list.length === 1 && list[0] === el) return true;
+        } catch {}
+        try { return el.matches(sel); } catch { return false; }
       };
+
+      const isSelectorUnique = (sel: string, el: Element) => isSelectorAcceptable(sel, el);
 
       const cssEscape = (str: string): string => {
         if (!str) return str;
@@ -4110,16 +4113,14 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
       }
       if (direct) return direct;
 
-      // Strategy 2: climb ancestors to find stable, then relative path
+      // Strategy 2: climb ancestors to find stable, then relative path (allow non-unique leaf if combined matches target)
       let current: Element | null = el.parentElement;
       while (current && current !== document.body && !isTimedOut()) {
         const anc = buildElementSelector(current);
         if (anc) {
-          const leaf = buildElementSelector(el, true);
-          if (leaf) {
-            const combined = `${anc} ${leaf}`;
-            if (isSelectorUnique(combined, el)) return combined;
-          }
+          const leaf = buildElementSelector(el, true) || el.tagName.toLowerCase();
+          const combined = `${anc} ${leaf}`;
+          if (isSelectorAcceptable(combined, el)) return combined;
         }
         current = current.parentElement;
       }
@@ -4138,13 +4139,13 @@ async function generateSelectorAtPoint(x: number, y: number): Promise<string | n
             path.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${idx})`);
           }
           const test = path.join(' > ');
-          if (isSelectorUnique(test, el)) return test;
+          if (isSelectorAcceptable(test, el)) return test;
         }
         node = node.parentElement;
         depth++;
       }
 
-      // Final fallback
+      // Final fallback: click target tag
       return el.tagName.toLowerCase();
     }, { x, y });
   } catch {
